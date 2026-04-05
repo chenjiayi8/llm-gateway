@@ -19,6 +19,7 @@ from litellm.proxy.middleware.auto_queue_middleware import (
     AutoQueueStatusRedisError,
     auto_queue_unavailable_error,
     build_auto_queue_status_response,
+    close_auto_queue_status_aqr,
     get_auto_queue_status_aqr as _get_auto_queue_status_aqr,
     get_auto_queue_status_models,
 )
@@ -82,6 +83,8 @@ async def get_queue_status(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=auto_queue_unavailable_error(error_model),
         )
+    finally:
+        await close_auto_queue_status_aqr(aqr)
 
 
 @router.get(
@@ -3446,7 +3449,15 @@ def _normalize_ui_spend_log_metadata(metadata: Any) -> Any:
         autoq_metadata = normalized_metadata.get("autoq")
         if isinstance(autoq_metadata, dict):
             normalized_metadata["autoq"] = dict(autoq_metadata)
-        return json.dumps(normalized_metadata, default=str)
+        return normalized_metadata
+    if isinstance(metadata, str):
+        try:
+            parsed_metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            return metadata
+        if isinstance(parsed_metadata, dict):
+            return _normalize_ui_spend_log_metadata(parsed_metadata)
+        return parsed_metadata
     return metadata
 
 

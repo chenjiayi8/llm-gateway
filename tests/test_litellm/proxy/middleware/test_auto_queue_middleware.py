@@ -27,6 +27,7 @@ import fakeredis.aioredis
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from redis.exceptions import RedisError
 from starlette.applications import Starlette
 from starlette.routing import Route
 
@@ -406,7 +407,7 @@ async def test_heartbeat_start_failure_releases_claimed_slot_before_503(monkeypa
             sys.modules.pop(_name, None)
     sys.path.insert(0, worktree_root)
     module = importlib.import_module("litellm.proxy.middleware.auto_queue_middleware")
-    assert ".worktrees/autoqueue-distributed-queue" in module.__file__
+    assert os.path.abspath(module.__file__).startswith(worktree_root)
     release_calls = []
     monkeypatch.setattr(module, "_id_counter", iter([12]))
     monkeypatch.setattr(module.time, "monotonic_ns", lambda: 0)
@@ -495,6 +496,83 @@ async def test_heartbeat_start_failure_releases_claimed_slot_before_503(monkeypa
             {"terminal_state": "cancelled", "allow_missing_active": True},
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_timeout_cleanup_redis_failure_only_sends_one_response(monkeypatch):
+    worktree_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
+    for _name in list(sys.modules):
+        if _name == "litellm" or _name.startswith("litellm."):
+            sys.modules.pop(_name, None)
+    sys.path.insert(0, worktree_root)
+    module = importlib.import_module("litellm.proxy.middleware.auto_queue_middleware")
+
+    monkeypatch.setattr(module, "_id_counter", iter([3]))
+    monkeypatch.setattr(module.time, "monotonic_ns", lambda: 0)
+    monkeypatch.setattr(module, "_get_key_config", lambda scope: (0, 10))
+
+    queued_state = AutoQueueRequestState(
+        request_id="gpt-4-3-0",
+        model="gpt-4",
+        priority=10,
+        state="queued",
+        enqueued_at_ms=1,
+        deadline_at_ms=1,
+        worker_id="worker-a",
+    )
+
+    class FakeAQR:
+        async def admit_or_enqueue(self, model, request_id, priority, deadline_at_ms, worker_id):
+            return AdmitDecision(
+                decision="queued",
+                request_state=queued_state,
+            )
+
+    async def app(scope, receive, send):
+        raise AssertionError("downstream app should not be called for a timed out queued request")
+
+    middleware = module.AutoQueueMiddleware(app, aqr=FakeAQR(), enabled=True)
+
+    async def fake_load_request_state(aqr, request_id):
+        return queued_state
+
+    async def fake_finalize_locally_queued_request(aqr, *, model, request_id, terminal_state):
+        raise RedisError("temporary redis failure")
+
+    monkeypatch.setattr(middleware, "_load_request_state", fake_load_request_state)
+    monkeypatch.setattr(
+        middleware,
+        "_finalize_locally_queued_request",
+        fake_finalize_locally_queued_request,
+    )
+
+    sent = []
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": json.dumps({"model": "gpt-4", "messages": []}).encode(),
+            "more_body": False,
+        }
+
+    async def send(message):
+        sent.append(message)
+
+    await middleware(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "headers": [],
+            "query_string": b"",
+        },
+        receive,
+        send,
+    )
+
+    response_starts = [message for message in sent if message["type"] == "http.response.start"]
+    assert len(response_starts) == 1
+    assert response_starts[0]["status"] == 503
 
 
 @pytest.mark.asyncio

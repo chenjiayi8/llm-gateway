@@ -151,9 +151,10 @@ class AutoQueueReconciler:
     async def _run(self) -> None:
         try:
             while True:
-                await self.reconcile_once()
+                try:
+                    await self.reconcile_once()
+                except Exception:
+                    logger.exception("Auto-queue reconciler crashed")
                 await asyncio.sleep(self.interval_seconds)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception("Auto-queue reconciler crashed")
