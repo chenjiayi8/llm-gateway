@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 
@@ -247,3 +248,33 @@ async def test_active_lease_heartbeat_retries_after_transient_refresh_error(monk
     await heartbeat._run()
 
     assert calls == ["refresh", "refresh"]
+
+
+@pytest.mark.asyncio
+async def test_reconciler_run_retries_after_transient_redis_error(monkeypatch, aqr_factory):
+    reconciler = AutoQueueReconciler(aqr=aqr_factory(), interval_seconds=0.01)
+    calls = []
+    sleeps = []
+
+    async def fake_reconcile_once():
+        calls.append("reconcile")
+        if len(calls) == 1:
+            raise RedisError("temporary redis failure")
+        return 0
+
+    async def fake_sleep(_seconds):
+        sleeps.append("sleep")
+        if len(sleeps) >= 2:
+            raise asyncio.CancelledError()
+        return None
+
+    monkeypatch.setattr(reconciler, "reconcile_once", fake_reconcile_once)
+    monkeypatch.setattr(
+        "litellm.proxy.middleware.auto_queue_reconciler.asyncio.sleep",
+        fake_sleep,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await reconciler._run()
+
+    assert calls == ["reconcile", "reconcile"]

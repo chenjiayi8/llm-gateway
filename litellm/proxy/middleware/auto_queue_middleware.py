@@ -378,6 +378,13 @@ async def build_auto_queue_status_response(
     return {"models": models_info}
 
 
+async def close_auto_queue_status_aqr(aqr: AutoQueueRedis) -> None:
+    redis_client = getattr(aqr, "redis", None)
+    close = getattr(redis_client, "aclose", None)
+    if callable(close):
+        await close()
+
+
 def _extract_response_status(exc: Exception) -> Optional[int]:
     response = getattr(exc, "response", None)
     return getattr(response, "status_code", None)
@@ -565,10 +572,10 @@ class AutoQueueMiddleware:
         request_id: str,
         terminal_state: str,
         send: Send,
-    ) -> None:
+    ) -> bool:
         state = await self._load_request_state(aqr, request_id)
         if state is None:
-            return
+            return True
 
         if state.state == "queued":
             finalized = await self._safe_redis_call(
@@ -582,12 +589,12 @@ class AutoQueueMiddleware:
                 send=send,
             )
             if finalized is None:
-                return
+                return False
             if finalized:
-                return
+                return True
             state = await self._load_request_state(aqr, request_id)
             if state is None:
-                return
+                return True
 
         if state.state in {"claimed", "active"}:
             transfer = await self._safe_redis_call(
@@ -601,8 +608,9 @@ class AutoQueueMiddleware:
                 send=send,
             )
             if transfer is None:
-                return
+                return False
             self._wake_local_request(model, transfer.claimed_request_id)
+        return True
 
     async def _cleanup_failed_claimed_request(
         self,
@@ -788,13 +796,15 @@ class AutoQueueMiddleware:
                         event="cancelled",
                         payload={"reason": _QueueWakeReason.SHUTDOWN},
                     )
-                    await self._abandon_waiting_request(
+                    abandoned = await self._abandon_waiting_request(
                         aqr,
                         model=model,
                         request_id=request_id,
                         terminal_state="cancelled",
                         send=send,
                     )
+                    if not abandoned:
+                        return
                     logger.info(
                         "Rejecting previously queued request after shutdown wake",
                         extra={"model": model, "request_id": request_id},
@@ -816,13 +826,15 @@ class AutoQueueMiddleware:
                     event="timed_out",
                     payload={"timeout_seconds": timeout_seconds},
                 )
-                await self._abandon_waiting_request(
+                abandoned = await self._abandon_waiting_request(
                     aqr,
                     model=model,
                     request_id=request_id,
                     terminal_state="timed_out",
                     send=send,
                 )
+                if not abandoned:
+                    return
                 await _send_json_error(send, 504, f"Queue timeout after {timeout_seconds}s for model {model}")
                 return
 

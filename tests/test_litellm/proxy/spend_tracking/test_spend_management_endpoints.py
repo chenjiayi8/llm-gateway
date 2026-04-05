@@ -530,9 +530,9 @@ async def test_ui_view_spend_logs_preserves_autoq_metadata(client, monkeypatch):
 
         assert response.status_code == 200, response.text
         data = response.json()
-        metadata = json.loads(data["data"][0]["metadata"])
+        metadata = data["data"][0]["metadata"]
 
-        assert isinstance(data["data"][0]["metadata"], str)
+        assert isinstance(metadata, dict)
         assert "autoq" in metadata
         assert metadata["autoq"]["summary"]["queued"] is True
         assert metadata["autoq"]["summary"]["queue_wait_ms"] == 321
@@ -621,6 +621,51 @@ def test_queue_status_returns_json_503_on_redis_failure(client, monkeypatch):
         assert response.json() == {
             "error": "Auto-queue unavailable for model gpt-fail"
         }
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
+
+
+def test_queue_status_closes_redis_client_after_success(client, monkeypatch):
+    class FakeRedis:
+        def __init__(self):
+            self.closed = False
+
+        async def scan_iter(self, match=None):
+            yield b"autoq:limit:gpt-4"
+
+        async def aclose(self):
+            self.closed = True
+
+    class FakeAQR:
+        def __init__(self):
+            self.redis = FakeRedis()
+
+        async def get_model_info(self, model):
+            return {
+                "active": 1,
+                "limit": 2,
+                "queued": 0,
+                "ceiling": 5,
+            }
+
+    fake_aqr = FakeAQR()
+    monkeypatch.setattr(
+        spend_management_endpoints,
+        "get_auto_queue_status_aqr",
+        lambda: fake_aqr,
+    )
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(
+        user_role=LitellmUserRoles.PROXY_ADMIN, user_id="admin_user"
+    )
+
+    try:
+        response = client.get(
+            "/queue/status",
+            headers={"Authorization": "Bearer sk-test"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert fake_aqr.redis.closed is True
     finally:
         app.dependency_overrides.pop(ps.user_api_key_auth, None)
 
@@ -1280,8 +1325,8 @@ async def test_ui_view_session_spend_logs_preserves_autoq_metadata(client, monke
 
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert isinstance(payload["data"][0]["metadata"], str)
-        metadata = json.loads(payload["data"][0]["metadata"])
+        metadata = payload["data"][0]["metadata"]
+        assert isinstance(metadata, dict)
         assert metadata["autoq"]["summary"]["queued"] is True
         assert metadata["autoq"]["summary"]["queue_wait_ms"] == 111
         assert metadata["autoq"]["events"][0]["payload"]["position"] == 1
@@ -2513,7 +2558,8 @@ async def test_ui_view_spend_logs_with_error_code(client):
             assert data["total"] == 1
             assert len(data["data"]) == 1
             assert data["data"][0]["id"] == "log1"
-            metadata = json.loads(data["data"][0]["metadata"])
+            metadata = data["data"][0]["metadata"]
+            assert isinstance(metadata, dict)
             assert "error_information" in metadata
             assert metadata["error_information"]["error_code"] == "404"
     finally:
@@ -2586,7 +2632,8 @@ async def test_ui_view_spend_logs_with_error_message(client):
             assert data["total"] == 1
             assert len(data["data"]) == 1
             assert data["data"][0]["id"] == "log1"
-            metadata = json.loads(data["data"][0]["metadata"])
+            metadata = data["data"][0]["metadata"]
+            assert isinstance(metadata, dict)
             assert "error_information" in metadata
             assert (
                 "Rate limit exceeded" in metadata["error_information"]["error_message"]
@@ -2678,7 +2725,8 @@ async def test_ui_view_spend_logs_with_error_code_and_key_alias(client):
             assert data["total"] == 1
             assert len(data["data"]) == 1
             assert data["data"][0]["id"] == "log3"
-            metadata = json.loads(data["data"][0]["metadata"])
+            metadata = data["data"][0]["metadata"]
+            assert isinstance(metadata, dict)
             assert "user_api_key_alias" in metadata
             assert metadata["user_api_key_alias"] == "test-key-1"
             assert "error_information" in metadata
