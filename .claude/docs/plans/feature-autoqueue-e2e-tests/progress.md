@@ -21,6 +21,19 @@ Task 4 completed with overflow/timeout scenario implementation and local runtime
 
 ## Timeline (Chronological)
 
+## 2026-04-08 13:46 — task 4 quality-fix pass (crash-safety + contract alignment)
+- Updated `run_autoqueue_e2e.py` scenario expectation validation for overflow/timeout:
+  - fails expectations when `transport_errors > 0` unless explicitly overridden via scenario config (`allow_transport_errors=true`)
+  - this enforces "bounded failure without proxy crash" in automated checks
+- Resolved docs/assertion contract mismatch by standardizing Task 4 semantics:
+  - overflow/timeout rows now state that `200` responses are allowed but not required under aggressive overload/timeout conditions
+  - assertions remain focused on bounded-failure (`503`/`429`) and timeout (`504`) requirements with crash-safety (`transport_errors=0`)
+- Clarified summary metric naming:
+  - added `bounded_failure_count` (`429+503`) as canonical field
+  - retained `queue_full_count` as backwards-compatible alias
+- Verification:
+  - `python -m py_compile .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py` passed
+
 ## 2026-04-08 13:45 — task 4 completion (runtime evidence)
 - Ran Task 4 scenarios against user-validated runtime profile (`http://localhost:4000`, `model=glm-5`):
   - overflow command: `... run_autoqueue_e2e.py --scenario overflow`

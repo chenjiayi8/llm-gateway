@@ -108,7 +108,16 @@ def _validate_scenario_expectations(
     scenario_cfg: dict[str, Any],
     status_counts: dict[str, int],
     other_status_counts: dict[str, int],
+    transport_errors: int,
 ) -> tuple[bool, str | None]:
+    expects_pressure_behavior = scenario_cfg.get("expect_bounded_failure") or scenario_cfg.get(
+        "expect_timeout"
+    )
+    if expects_pressure_behavior and transport_errors > 0 and not scenario_cfg.get("allow_transport_errors", False):
+        return (
+            False,
+            f"Scenario '{scenario_name}' observed transport_errors={transport_errors}; expected 0 to prove proxy crash-safety.",
+        )
     if scenario_cfg.get("expect_bounded_failure"):
         statuses = scenario_cfg.get("bounded_failure_statuses") or [503]
         bounded_failure_count = sum(
@@ -252,6 +261,9 @@ def main() -> int:
         else:
             other_status_counts[key] = other_status_counts.get(key, 0) + 1
 
+    bounded_failure_count = _status_count(status_counts, other_status_counts, 429) + _status_count(
+        status_counts, other_status_counts, 503
+    )
     summary = {
         "event": "run_summary",
         "scenario": args.scenario,
@@ -261,8 +273,8 @@ def main() -> int:
         "model": args.model,
         "status_counts": status_counts,
         "other_status_counts": other_status_counts,
-        "queue_full_count": _status_count(status_counts, other_status_counts, 429)
-        + _status_count(status_counts, other_status_counts, 503),
+        "bounded_failure_count": bounded_failure_count,
+        "queue_full_count": bounded_failure_count,  # Backwards-compatible alias; prefer bounded_failure_count.
         "timeout_count": _status_count(status_counts, other_status_counts, 504),
         "transport_errors": transport_errors,
         "success_200": status_counts["200"],
@@ -277,6 +289,7 @@ def main() -> int:
         scenario_cfg=scenario_cfg,
         status_counts=status_counts,
         other_status_counts=other_status_counts,
+        transport_errors=transport_errors,
     )
     summary["expectations_ok"] = expectations_ok
     if expectation_error is not None:
