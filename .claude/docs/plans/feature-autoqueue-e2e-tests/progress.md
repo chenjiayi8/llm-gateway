@@ -5,7 +5,7 @@ Started: 2026-04-07
 Last updated: 2026-04-08
 
 ## Status Summary
-- Task 1: Freeze canonical request and environment contract — DONE
+- Task 1: Freeze canonical request and environment contract — DONE_WITH_CONCERNS
 - Task 2: Build local load runner around canonical request — NOT STARTED
 - Task 3: Add queue-status and spend-log evidence collectors — NOT STARTED
 - Task 4: Add overload and timeout scenarios for local proof — NOT STARTED
@@ -13,7 +13,7 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 1 docs now include validated operator evidence for `/queue/status` and root-cause analysis for the earlier `404` on host `:4000`.
+Task 1 fix pass complete: `/queue/status` now has reproducible `HTTP 200` evidence with model queue-state fields in controlled local runtime; canonical request currently returns `429` in this environment.
 
 ## 2026-04-08 10:44 — task 1 execution start
 - Resumed Task 1 in active implementation session.
@@ -36,14 +36,26 @@ Task 1 docs now include validated operator evidence for `/queue/status` and root
 - Conclusion: previous check hit a different runtime contract than the intended auto-queue validation target.
 
 ## 2026-04-08 11:08 — reproducible queue-status validation completed
-- Brought up controlled local validation runtime (repo code) with explicit auto-queue + Redis + Postgres env, on `localhost:4010`.
-- Manual baseline request (`/v1/chat/completions`) result: `HTTP 200` with valid `glm-5.1` completion payload.
-- Manual queue-status request (`/queue/status`) result: `HTTP 200` with queue fields:
-  - `{"models":{"glm-5.1":{"active":0,"limit":3,"queued":0,"ceiling":50,"local_waiters":0}}}`
-- Updated `autoqueue-e2e-scenarios.md` with operator evidence and reproducible corrective procedure.
+- Started controlled local runtime from repo code on `localhost:4001` with explicit env:
+  - `AUTOQ_ENABLED=true`
+  - `AUTOQ_REDIS_HOST=127.0.0.1`, `AUTOQ_REDIS_PORT=6379`, `AUTOQ_REDIS_DB=3`
+  - `DATABASE_URL=postgresql://llmproxy:dbpassword9090@127.0.0.1:5432/litellm`
+  - `LITELLM_MASTER_KEY=sk-1234`
+- Confirmed route contract in controlled runtime includes `/queue/status` (`/routes` output includes `"/queue/chat/completions"` and `"/queue/status"`).
+- Initial queue-status call returned `HTTP 503` because local Redis was unavailable.
+- Brought up local Redis with `docker run -d --name task1-queue-redis -p 6379:6379 redis:7-alpine`.
+- Queue-status call then returned `HTTP 200` with queue-state payload:
+  - `{"models":{"glm-5.1":{"active":0,"limit":2,"queued":0,"ceiling":50,"local_waiters":0}}}`
+- Canonical chat request in this controlled runtime currently returns `HTTP 429` (upstream throttling/limit), but follow-up status polls remained `HTTP 200` and showed queue-state transitions (`active` observed at `1`, then drained to `0`).
+- Updated `autoqueue-e2e-scenarios.md` with corrected operator commands and concrete evidence.
 
-## 2026-04-08 11:09 — validation environment cleanup
-- Removed temporary validation containers (`autoq-task1-redis`, `autoq-task1-postgres`) after capturing Task 1 evidence.
+## 2026-04-08 11:12 — task 1 fix pass complete
+- Spec-review gap for Step 4 addressed with concrete `/queue/status` success evidence (`HTTP 200` + `models.glm-5.1` queue fields).
+- Task 1 kept scoped to documentation/progress artifacts only; no Task 2+ implementation performed.
+
+## 2026-04-08 11:12 — local validation teardown
+- Stopped controlled local proxy runtime (`:4001`) after evidence capture.
+- Removed temporary Redis container used for this validation pass (`task1-queue-redis`).
 
 ## 2026-04-07 00:00 — session start
 - Created feature-branch planning directory for empowered superpowers work.
