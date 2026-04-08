@@ -13,13 +13,32 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 5 quality/spec fix pass completed at `HEAD be44b5e10d9d`; deterministic regression file passes with strict `-v` command evidence, while adjacent middleware/reconciler suites still show pre-existing `fakeredis` Lua-script compatibility failures (`unknown command 'evalsha'`) in this environment.
+Task 5 hardening follow-up completed on top of `HEAD dff5d587dd`; deterministic regression file passes with strict `-v` command evidence after deadlock/auth-semantic fixes, while adjacent middleware/reconciler suites still show pre-existing `fakeredis`/Redis compatibility failures in this environment.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 20:14 — task 5 hardening pass at `dff5d587dd` (deadlock + auth semantics + strict evidence)
+- Applied hardening updates in `tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py`:
+  - wrapped async event waits with `asyncio.wait_for(...)` to avoid indefinite hangs in overload flow
+  - ensured `allow_active_request_to_finish` is always set in `finally`
+  - ensured `admitted_task` is always cancelled/drained safely on failure paths
+  - expanded queue-status auth semantics to deterministic negative paths:
+    - missing/invalid token -> `401`
+    - non-admin token -> `403`
+    - admin token -> `200`
+- Strict required command evidence (current):
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py -v`
+  - result: `3 passed`
+- Adjacent verification rerun (strict `-v`):
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_middleware.py -v` -> `8 failed, 11 passed, 1 xpassed`
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_reconciler.py -v` -> `3 failed, 2 passed` (`fakeredis` `unknown command 'evalsha'`)
+  - `poetry run pytest tests/test_litellm/proxy/spend_tracking/test_spend_management_endpoints.py -v` -> `55 passed`
+- Concern:
+  - adjacent failures remain consistent with pre-existing environment/runtime incompatibility (Redis/fakeredis script command path), not introduced by this Task 5 scoped hardening change.
 
 ## 2026-04-08 19:06 — task 5 quality/spec fix pass at `be44b5e10d9d`
 - Applied review-driven fixes in `tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py`:
