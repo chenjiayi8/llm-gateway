@@ -5,21 +5,68 @@ Started: 2026-04-07
 Last updated: 2026-04-08
 
 ## Status Summary
-- Task 1: Freeze canonical request and environment contract — DONE_WITH_CONCERNS (Requirement 3 satisfied once; current reruns blocked by upstream `429`)
-- Task 2: Build local load runner around canonical request — NOT STARTED
+- Task 1: Freeze canonical request and environment contract — DONE
+- Task 2: Build local load runner around canonical request — DONE_WITH_CONCERNS
 - Task 3: Add queue-status and spend-log evidence collectors — NOT STARTED
 - Task 4: Add overload and timeout scenarios for local proof — NOT STARTED
 - Task 5: Codify deterministic CI-safe regression subset — NOT STARTED
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 1 quality-fix pass complete: scenario docs now keep a stable contract/matrix view, with transient rerun incident detail tracked in progress timeline entries.
+Task 2 complete with concerns: local runner implemented and executed for baseline/burst scenarios, but upstream `glm-5.1` path returned `429` for all requests in this run window (no baseline `200` observed).
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 12:01 — task 2 execution start
+- Marked Task 1 `DONE` and Task 2 `IN PROGRESS` per Task 2 handoff requirements.
+- Starting with failing harness stub + explicit not-implemented execution proof.
+
+## 2026-04-08 12:02 — task 2 step 1/2 stub proof
+- Created `.claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py` stub with required scenarios:
+  - `baseline`, `burst-5`, `burst-10`, `soak-20`
+- Stub command evidence:
+  - `poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py --scenario baseline`
+  - Output included placeholder per-request line and `NotImplementedError: request runner not implemented`
+  - Exit code: `1` (expected non-zero)
+
+## 2026-04-08 12:04 — task 2 step 3 implementation
+- Replaced stub with minimal concurrent runner implementation:
+  - reuses canonical `glm-5.1` payload shape and auth header (`Authorization: Bearer <env token>`)
+  - records per-request `start_time`, `end_time`, `latency_ms`, `status_code`, and response excerpt
+  - prints JSON lines for each request result and final JSON summary
+  - summary includes aggregate counts for `200`, `503`, `504`
+- Syntax verification:
+  - `python -m py_compile .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py` -> `PY_COMPILE_OK`
+
+## 2026-04-08 12:05 — task 2 step 4/5 run evidence
+- Runtime used for this run:
+  - controlled local proxy `http://localhost:4001` with env-based token auth and healthy queue endpoint
+  - post-run queue health check:
+    - `curl ... /queue/status` -> `queue_status_http=200` with body `{"models":{}}`
+- Baseline run:
+  - command: `TASK1_BASE_URL=http://localhost:4001 TASK1_AUTH_TOKEN=<env> poetry run python ... --scenario baseline`
+  - exit code: `0`
+  - summary: `status_counts={"200":0,"503":0,"504":0}`, `other_status_counts={"429":1}`, `transport_errors=0`
+- Burst-5 run:
+  - command: `TASK1_BASE_URL=http://localhost:4001 TASK1_AUTH_TOKEN=<env> poetry run python ... --scenario burst-5`
+  - exit code: `0`
+  - summary: `status_counts={"200":0,"503":0,"504":0}`, `other_status_counts={"429":5}`, `transport_errors=0`
+  - latency evidence: request latencies ranged from ~7.5s to ~17.3s
+- Burst-10 run:
+  - command: `TASK1_BASE_URL=http://localhost:4001 TASK1_AUTH_TOKEN=<env> poetry run python ... --scenario burst-10`
+  - exit code: `0`
+  - summary: `status_counts={"200":0,"503":0,"504":0}`, `other_status_counts={"429":10}`, `transport_errors=0`
+  - latency evidence: request latencies ranged from ~24.1s to ~46.6s
+- Interpretation:
+  - runner executed concurrent load without local proxy crash
+  - expected Task 2 baseline success target (`one 200`) was not met due upstream throttling/quota behavior in this environment window
+
+## 2026-04-08 12:05 — task 2 completion
+- Marked Task 2 `DONE_WITH_CONCERNS` due missing baseline `HTTP 200` despite successful runner execution and command evidence capture.
 
 ## 2026-04-07 00:00 — session start
 - Created feature-branch planning directory for empowered superpowers work.
