@@ -72,7 +72,8 @@ Task 1 quality-fix pass complete: scenario docs now keep a stable contract/matri
 - Attempt summary: `10/10` baseline attempts returned `HTTP 429`.
 - Error classes: `Weekly/Monthly Limit Exhausted` and `service may be temporarily overloaded`.
 - After runtime-state reset (`redis-cli -n 3 FLUSHDB`), baseline still returned `HTTP 429`.
-- Full attempt-level command/evidence retained in this progress timeline section for Task 1 incident tracking.
+- This timeline stores summarized evidence only (attempt counts + error classes).
+- Raw per-attempt response bodies were written during the run to `/tmp/task1_baseline_retry_*.json` (ephemeral runtime artifacts, not committed).
 
 ## 2026-04-08 11:31 — final task 1 reconciliation pass
 - Reconciled chronology to show both truths together:
@@ -80,6 +81,11 @@ Task 1 quality-fix pass complete: scenario docs now keep a stable contract/matri
   - Current reruns remained blocked by upstream `429`.
 
 ## 2026-04-08 11:39 — task 1 quality-fix pass
-- Added security note + env-var alternative snippets while preserving the exact canonical request block.
+- Added security note + env-var alternative snippets while preserving canonical request shape.
 - Added runtime profiles table and explicit note that canonical request freezes shape, not endpoint ownership.
 - Moved transient rerun incident detail out of scenario contract doc into progress timeline tracking.
+
+## 2026-04-08 11:39 — final quality remediation pass
+- Removed hardcoded token-shaped values from tracked Task 1 docs; auth values are now variable-sourced.
+- Introduced one active validation profile variable set and made command snippets derive from it.
+- Kept scenario doc contract-focused with brief evidence references only.
