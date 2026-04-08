@@ -7,19 +7,27 @@ Last updated: 2026-04-08
 ## Status Summary
 - Task 1: Freeze canonical request and environment contract — DONE
 - Task 2: Build local load runner around canonical request — DONE
-- Task 3: Add queue-status and spend-log evidence collectors — DONE_WITH_CONCERNS
+- Task 3: Add queue-status and spend-log evidence collectors — DONE
 - Task 4: Add overload and timeout scenarios for local proof — NOT STARTED
 - Task 5: Codify deterministic CI-safe regression subset — NOT STARTED
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 3 completed with stub-first verification and combined burst evidence (`during` snapshots, post-run idle, and spend-log `metadata.autoq`) on controlled runtime `http://localhost:4001`; canonical `localhost:4000` still serves `/queue/status` as `404` in this environment.
+Task 3 quality-fix pass completed: numeric/parse hardening, stricter model matching, safer error diagnostics, and duplicate `metadata.autoq` extraction removal applied to the two collector scripts.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 13:18 — task 3 quality-fix pass complete
+- Applied quality fixes requested by review:
+  - `poll_queue_status.py`: idle-check parsing is now defensive; non-numeric queue fields are treated as non-idle without crashing.
+  - `collect_spend_log_evidence.py`: bounded/defensive `total_pages` parsing, stricter canonical model matching with explicit controlled variants, compact/truncated payload diagnostics, and shared helper for `metadata.autoq` extraction.
+- Verification rerun for fix pass:
+  - `python -m py_compile` on both scripts passed
+  - LSP diagnostics on both scripts returned zero issues.
 
 ## 2026-04-08 13:02 — task 3 completion (combined burst evidence)
 - Final combined run used controlled runtime profile (`http://localhost:4001`, `model=glm-5`) with:
