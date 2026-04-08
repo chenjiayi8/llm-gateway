@@ -9,17 +9,37 @@ Last updated: 2026-04-08
 - Task 2: Build local load runner around canonical request — DONE
 - Task 3: Add queue-status and spend-log evidence collectors — DONE
 - Task 4: Add overload and timeout scenarios for local proof — DONE_WITH_CONCERNS
-- Task 5: Codify deterministic CI-safe regression subset — NOT STARTED
+- Task 5: Codify deterministic CI-safe regression subset — DONE_WITH_CONCERNS
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 4 completed with overflow/timeout scenario implementation and local runtime evidence capture on `localhost:4000` (`model=glm-5`), with concern that queue-drain verification is blocked on this host by `/queue/status` returning `404`.
+Task 5 completed with deterministic CI-safe regression tests added; adjacent middleware/reconciler suites currently show pre-existing `fakeredis` Lua-script compatibility failures (`unknown command 'evalsha'`) in this environment.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 13:45 — task 5 completion (deterministic CI-safe regression subset)
+- Added new deterministic regression file:
+  - `tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py`
+  - tests added:
+    - `test_auto_queue_status_endpoint_requires_auth_and_returns_models`
+    - `test_auto_queue_bounded_overload_returns_expected_status_mix`
+    - `test_auto_queue_metadata_is_preserved_in_spend_logs`
+- TDD proof (required failing-first):
+  - initial run: `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py -q`
+  - result: `3 failed` (stub helper `NotImplementedError` paths)
+- Implemented minimal deterministic helpers/fixtures in the same test file (no external runtime dependency) and reran:
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py -q`
+  - result: `3 passed`
+- Adjacent test runs (Task 5 step 5):
+  - `tests/test_litellm/proxy/middleware/test_auto_queue_middleware.py`: `8 failed, 11 passed, 1 xpassed` (failures consistently return `503` with `Auto-queue unavailable due to Redis error`)
+  - `tests/test_litellm/proxy/middleware/test_auto_queue_reconciler.py`: `3 failed, 2 passed` (`fakeredis` `ResponseError: unknown command 'evalsha'`)
+  - `tests/test_litellm/proxy/spend_tracking/test_spend_management_endpoints.py`: `55 passed`
+- Concern:
+  - adjacent middleware/reconciler failures appear pre-existing/environmental (`fakeredis` Lua-script path), not introduced by Task 5 file scope.
 
 ## 2026-04-08 13:46 — task 4 quality-fix pass (crash-safety + contract alignment)
 - Updated `run_autoqueue_e2e.py` scenario expectation validation for overflow/timeout:
