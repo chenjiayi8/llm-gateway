@@ -13,7 +13,7 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 5 hardening follow-up completed on top of `HEAD dff5d587dd`; deterministic regression file passes with strict `-v` command evidence after deadlock/auth-semantic fixes, while adjacent middleware/reconciler suites still show pre-existing `fakeredis`/Redis compatibility failures in this environment.
+Task 5 hardening follow-up started on top of `dff5d587dd` and landed at current `HEAD 2f0a48b4f880`; deterministic regression file passes with strict `-v` command evidence after deadlock/auth-semantic fixes, while adjacent middleware/reconciler suites still show pre-existing `fakeredis`/Redis compatibility failures in this environment.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
@@ -54,7 +54,8 @@ Task 5 hardening follow-up completed on top of `HEAD dff5d587dd`; deterministic 
   - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_reconciler.py -q` -> `3 failed, 2 passed` (`fakeredis` `unknown command 'evalsha'`)
   - `poetry run pytest tests/test_litellm/proxy/spend_tracking/test_spend_management_endpoints.py -q` -> `55 passed`
 - Historical note correction:
-  - earlier Task 5 stub-first evidence used `-q` during initial implementation phase; strict quality/spec pass evidence now uses the required `-v` command form.
+  - entries in this section using `-q` are historical pre-hardening evidence from earlier Task 5 attempts.
+  - final-gate canonical evidence is the strict `-v` rerun recorded in the subsequent 20:14 hardening section.
 - Concern:
   - adjacent non-scope failures remain consistent with prior environment-level Redis/fakeredis incompatibility and are not introduced by this Task 5 scoped test-file change.
 
