@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -83,10 +84,32 @@ def _extract_model_row(body_json: Any, target_model: str) -> tuple[bool, Any, in
 def _is_idle_model_row(model_row: Any) -> bool:
     if not isinstance(model_row, dict):
         return False
-    active = int(model_row.get("active", -1))
-    queued = int(model_row.get("queued", -1))
-    local_waiters = int(model_row.get("local_waiters", -1))
+    active = _safe_parse_int(model_row.get("active"))
+    queued = _safe_parse_int(model_row.get("queued"))
+    local_waiters = _safe_parse_int(model_row.get("local_waiters"))
+    if active is None or queued is None or local_waiters is None:
+        return False
     return active == 0 and queued == 0 and local_waiters == 0
+
+
+def _safe_parse_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text == "":
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    return None
 
 
 def _capture_snapshot(

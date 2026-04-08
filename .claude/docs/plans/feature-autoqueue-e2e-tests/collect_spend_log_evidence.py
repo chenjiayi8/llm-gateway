@@ -70,6 +70,77 @@ def _normalize_metadata(raw: Any) -> Any:
     return raw
 
 
+def _normalize_model_token(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _model_variants(target_model: str) -> set[str]:
+    target = _normalize_model_token(target_model)
+    if not target:
+        return set()
+    variants = {target}
+    # Explicitly support only canonical openai-prefixed variant mapping.
+    if "/" in target:
+        _, _, model_name = target.partition("/")
+        if model_name:
+            variants.add(model_name)
+    else:
+        variants.add(f"openai/{target}")
+    return variants
+
+
+def _matches_target_model(row: dict[str, Any], target_model: str) -> bool:
+    variants = _model_variants(target_model)
+    if not variants:
+        return False
+    candidates = (
+        _normalize_model_token(row.get("model")),
+        _normalize_model_token(row.get("model_group")),
+        _normalize_model_token(row.get("model_id")),
+    )
+    return any(candidate and candidate in variants for candidate in candidates)
+
+
+def _safe_truncate(value: Any, max_chars: int = 240) -> str:
+    try:
+        if isinstance(value, str):
+            text = value
+        else:
+            text = json.dumps(value, default=str)
+    except Exception:
+        text = repr(value)
+    text = text.replace("\n", " ").strip()
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+
+def _parse_total_pages(raw_total_pages: Any, max_pages: int) -> int:
+    bounded_max_pages = max(1, max_pages)
+    try:
+        parsed = int(raw_total_pages)
+    except (TypeError, ValueError):
+        return 1
+    if parsed < 1:
+        return 1
+    return min(parsed, bounded_max_pages)
+
+
+def _extract_autoq_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = row.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    autoq_metadata = metadata.get("autoq")
+    if not isinstance(autoq_metadata, dict):
+        return None
+    return {
+        "request_id": row.get("request_id"),
+        "status": row.get("status"),
+        "startTime": row.get("startTime"),
+        "autoq": autoq_metadata,
+    }
+
+
 def _fetch_spend_logs_page(
     base_url: str,
     auth_token: str,
@@ -113,23 +184,6 @@ def _fetch_spend_logs_page(
     return code, payload
 
 
-def _matches_target_model(row: dict[str, Any], target_model: str) -> bool:
-    target = target_model.strip().lower()
-    if not target:
-        return False
-    candidates = [
-        str(row.get("model") or "").strip().lower(),
-        str(row.get("model_group") or "").strip().lower(),
-        str(row.get("model_id") or "").strip().lower(),
-    ]
-    for candidate in candidates:
-        if not candidate:
-            continue
-        if candidate == target or target in candidate or candidate in target:
-            return True
-    return False
-
-
 def main() -> int:
     args = parse_args()
     if not args.auth_token:
@@ -162,19 +216,28 @@ def main() -> int:
             )
             if code != 200:
                 print(
-                    f"Failed to fetch spend logs page={page} status={code} payload={payload}",
+                    "Failed to fetch spend logs "
+                    f"page={page} status={code} payload_excerpt={_safe_truncate(payload)}",
                     file=sys.stderr,
                 )
                 return 3
             if not isinstance(payload, dict):
-                print(f"Unexpected spend logs response payload: {payload}", file=sys.stderr)
+                print(
+                    "Unexpected spend logs response payload "
+                    f"type={type(payload).__name__} payload_excerpt={_safe_truncate(payload)}",
+                    file=sys.stderr,
+                )
                 return 3
 
             page_rows = payload.get("data")
-            total_pages = int(payload.get("total_pages", 1))
+            total_pages = _parse_total_pages(payload.get("total_pages", 1), args.max_pages)
             total_pages_seen = max(total_pages_seen, total_pages)
             if not isinstance(page_rows, list):
-                print(f"Unexpected spend logs data format: {payload}", file=sys.stderr)
+                print(
+                    "Unexpected spend logs data format "
+                    f"page={page} data_type={type(page_rows).__name__} payload_excerpt={_safe_truncate(payload)}",
+                    file=sys.stderr,
+                )
                 return 3
 
             for row in page_rows:
@@ -200,16 +263,9 @@ def main() -> int:
             metadata = _normalize_metadata(row_copy.get("metadata"))
             row_copy["metadata"] = metadata
             filtered_rows.append(row_copy)
-
-            if isinstance(metadata, dict) and isinstance(metadata.get("autoq"), dict):
-                autoq_rows.append(
-                    {
-                        "request_id": row_copy.get("request_id"),
-                        "status": row_copy.get("status"),
-                        "startTime": row_copy.get("startTime"),
-                        "autoq": metadata.get("autoq"),
-                    }
-                )
+            autoq_row = _extract_autoq_row(row_copy)
+            if autoq_row is not None:
+                autoq_rows.append(autoq_row)
 
         fetch_attempts.append(
             {
@@ -229,18 +285,7 @@ def main() -> int:
         if poll_idx + 1 < args.max_polls:
             time.sleep(max(0.0, args.poll_interval_seconds))
 
-    autoq_rows: list[dict[str, Any]] = []
-    for row in all_rows:
-        metadata = row.get("metadata")
-        if isinstance(metadata, dict) and isinstance(metadata.get("autoq"), dict):
-            autoq_rows.append(
-                {
-                    "request_id": row.get("request_id"),
-                    "status": row.get("status"),
-                    "startTime": row.get("startTime"),
-                    "autoq": metadata.get("autoq"),
-                }
-            )
+    autoq_rows = [autoq_row for row in all_rows if (autoq_row := _extract_autoq_row(row))]
 
     output = {
         "config": {
