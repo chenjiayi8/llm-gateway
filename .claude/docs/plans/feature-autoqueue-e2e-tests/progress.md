@@ -13,7 +13,7 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 2 complete with concerns: local runner implemented and executed for baseline/burst scenarios, but upstream `glm-5.1` path returned `429` for all requests in this run window (no baseline `200` observed).
+Task 2 strict requirement-4 fix pass executed on canonical runtime (`http://localhost:4000`), but bounded baseline retries still produced only `429` responses (`success_200=0` on every attempt).
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
@@ -67,6 +67,21 @@ Task 2 complete with concerns: local runner implemented and executed for baselin
 
 ## 2026-04-08 12:05 — task 2 completion
 - Marked Task 2 `DONE_WITH_CONCERNS` due missing baseline `HTTP 200` despite successful runner execution and command evidence capture.
+
+## 2026-04-08 12:14 — task 2 strict requirement-4 fix pass (canonical runtime)
+- Goal: capture at least one baseline `HTTP 200` using canonical runtime profile.
+- Canonical runtime command shape used:
+  - `TASK1_BASE_URL=http://localhost:4000 TASK1_AUTH_TOKEN=<env> poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py --scenario baseline`
+- Bounded retries executed:
+  - 10 total baseline attempts (5 with historical canonical token source from Task 1 evidence, 5 with local master-key token source).
+  - Per-attempt summaries recorded in `/tmp/task2_fix_attempts.tsv`.
+- Hard evidence:
+  - all 10 attempts reported `success_200=0`
+  - all 10 attempts reported `other_status_counts={"429":1}`
+  - observed baseline durations ranged from `6884.653ms` to `9586.517ms`
+- Outcome:
+  - strict requirement-4 target (>=1 baseline `HTTP 200`) could not be achieved in current environment window.
+  - Task 2 remains `DONE_WITH_CONCERNS`.
 
 ## 2026-04-07 00:00 — session start
 - Created feature-branch planning directory for empowered superpowers work.
