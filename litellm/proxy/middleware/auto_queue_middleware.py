@@ -16,14 +16,11 @@ import signal
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError
 from starlette.types import ASGIApp, Receive, Scope, Send
-
-if TYPE_CHECKING:
-    from litellm.proxy._types import AutoQueueModelStatus, AutoQueueStatusResponse
 
 from .auto_queue_logging import (
     AUTOQ_METADATA_KEY,
@@ -33,10 +30,6 @@ from .auto_queue_logging import (
 from .auto_queue_lease import ActiveLeaseHeartbeat
 from .auto_queue_scripts import AutoQueueRedis, DistributedAutoQueueRedis
 from .auto_queue_state import (
-    AUTOQ_ACTIVE_KEY_PREFIX,
-    AUTOQ_CEILING_KEY_PREFIX,
-    AUTOQ_LIMIT_KEY_PREFIX,
-    AUTOQ_QUEUE_KEY_PREFIX,
     active_lease_key,
     claim_key,
     queue_key,
@@ -316,73 +309,6 @@ async def _send_redis_unavailable(send: Send, model: str) -> None:
 
 def auto_queue_unavailable_error(model: str) -> Dict[str, str]:
     return {"error": f"Auto-queue unavailable for model {model}"}
-
-
-class AutoQueueStatusRedisError(RedisError):
-    def __init__(self, model: str):
-        super().__init__(f"Auto-queue unavailable for model {model}")
-        self.model = model
-
-
-def get_auto_queue_status_aqr() -> AutoQueueRedis:
-    redis_client = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
-    return DistributedAutoQueueRedis(
-        redis=redis_client,
-        default_max_concurrent=DEFAULT_MAX_CONCURRENT,
-        ceiling=CEILING,
-        scale_up_threshold=SCALE_UP_THRESHOLD,
-        scale_down_step=SCALE_DOWN_STEP,
-        max_queue_depth=MAX_QUEUE_DEPTH,
-    )
-
-
-async def get_auto_queue_status_models(
-    aqr: AutoQueueRedis, local_queues: Optional[Dict[str, "ModelQueue"]] = None
-) -> List[str]:
-    models = set((local_queues or {}).keys())
-    redis_client = getattr(aqr, "redis", None)
-    if redis_client is None:
-        return sorted(models)
-
-    prefixes = (
-        AUTOQ_ACTIVE_KEY_PREFIX,
-        AUTOQ_LIMIT_KEY_PREFIX,
-        AUTOQ_CEILING_KEY_PREFIX,
-        AUTOQ_QUEUE_KEY_PREFIX,
-    )
-    for prefix in prefixes:
-        async for raw_key in redis_client.scan_iter(match=f"{prefix}*"):
-            key = raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
-            if key.startswith(prefix):
-                models.add(key[len(prefix) :])
-    return sorted(models)
-
-
-async def build_auto_queue_status_response(
-    aqr: AutoQueueRedis, local_queues: Optional[Dict[str, "ModelQueue"]] = None
-) -> "AutoQueueStatusResponse":
-    models_info: Dict[str, "AutoQueueModelStatus"] = {}
-    queue_map = local_queues or {}
-    try:
-        models = await get_auto_queue_status_models(aqr, queue_map)
-    except RedisError as exc:
-        raise AutoQueueStatusRedisError("auto-queue") from exc
-
-    for model in models:
-        try:
-            info = await aqr.get_model_info(model)
-        except RedisError as exc:
-            raise AutoQueueStatusRedisError(model) from exc
-        info["local_waiters"] = queue_map.get(model).depth if model in queue_map else 0
-        models_info[model] = info
-    return {"models": models_info}
-
-
-async def close_auto_queue_status_aqr(aqr: AutoQueueRedis) -> None:
-    redis_client = getattr(aqr, "redis", None)
-    close = getattr(redis_client, "aclose", None)
-    if callable(close):
-        await close()
 
 
 def _extract_response_status(exc: Exception) -> Optional[int]:
