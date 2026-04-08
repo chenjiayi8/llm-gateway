@@ -36,33 +36,38 @@ curl http://localhost:4000/v1/chat/completions \
 
 ### Runtime B: controlled local proxy for reproducible Task 1 validation
 
-- Temporary local dependencies used for reproducibility:
-  - Redis container: `docker run -d --name autoq-task1-redis -p 6379:6379 redis:7-alpine`
-  - Postgres container: `docker run -d --name autoq-task1-postgres -p 55432:5432 ... postgres:16-alpine`
-- Controlled proxy launch (repo code + explicit auto-queue env):
+- Runtime dependencies used for reproducibility:
+  - Redis (local): `docker run -d --name task1-queue-redis -p 6379:6379 redis:7-alpine`
+  - Postgres (already running in workspace): `litellm_db` on `localhost:5432`
+- Controlled proxy launch (repo code + explicit auto-queue env) on `localhost:4001`:
 
 ```bash
 AUTOQ_ENABLED=true \
-REDIS_HOST=127.0.0.1 REDIS_PORT=6379 REDIS_DB=0 \
 AUTOQ_REDIS_HOST=127.0.0.1 AUTOQ_REDIS_PORT=6379 AUTOQ_REDIS_DB=3 \
-DATABASE_URL='postgresql://litellm:litellm@127.0.0.1:55432/litellm' \
-poetry run python -m litellm.proxy.proxy_cli \
-  --config /tmp/autoqueue_task1_proxy.yaml \
-  --port 4010
+REDIS_HOST=127.0.0.1 REDIS_PORT=6379 \
+DATABASE_URL='postgresql://llmproxy:dbpassword9090@127.0.0.1:5432/litellm' \
+LITELLM_MASTER_KEY='sk-1234' \
+poetry run litellm --port 4001
 ```
 
-- Manual baseline request in controlled runtime:
-  - `curl http://localhost:4010/v1/chat/completions ...`
-  - Result: `HTTP 200` with valid completion payload for `glm-5.1`.
+- Route exposure proof in controlled runtime:
+  - `curl -sS http://localhost:4001/routes | rg -o '"/[^"]*queue[^"]*"' | sort -u`
+  - Result includes both `"/queue/chat/completions"` and `"/queue/status"`.
 - Manual queue-status request in controlled runtime:
-  - `curl http://localhost:4010/queue/status ...`
+  - `curl http://localhost:4001/queue/status -H "Authorization: Bearer sk-1234"`
   - Result: `HTTP 200` with payload:
 
 ```json
-{"models":{"glm-5.1":{"active":0,"limit":3,"queued":0,"ceiling":50,"local_waiters":0}}}
+{"models":{"glm-5.1":{"active":0,"limit":2,"queued":0,"ceiling":50,"local_waiters":0}}}
 ```
 
-- Conclusion: `/queue/status` contract is valid in the intended auto-queue runtime; the prior Task 1 miss was due to hitting a different pre-existing process bound to `:4000`.
+- Manual canonical chat request in controlled runtime:
+  - `curl http://localhost:4001/v1/chat/completions ...`
+  - Current result: `HTTP 429` from upstream throttling/limit state for `glm-5.1` in this environment.
+- Follow-up queue-status poll after the canonical request:
+  - Result remained `HTTP 200` with queue state fields present (example observed snapshot: `active=1`, `queued=0`, `local_waiters=0`), then drained (`active=0`) on the subsequent poll.
+
+- Conclusion: `/queue/status` contract is valid in the intended auto-queue runtime; the prior Task 1 miss was due to hitting a different pre-existing process bound to `:4000`, not an endpoint path mismatch.
 
 ## First-Pass Scenario Table
 
