@@ -60,7 +60,7 @@ curl "$TASK1_BASE_URL/queue/status" \
 ## Task 1 Evidence References (Brief)
 
 - Requirement 3 baseline success evidence reference: commit `ef22dea798` (`HTTP 200` with valid completion body).
-- Requirement 4 queue-status contract evidence reference: progress timeline entry `2026-04-08 11:08`.
+- Requirement 4 queue-status contract evidence reference: progress timeline entry `2026-04-08 11:08` ("Sanitized Manual Evidence: `/queue/status` HTTP 200", including `active`, `queued`, `limit`, `ceiling`, `local_waiters`).
 - Current rerun blocker evidence reference: progress timeline entries `2026-04-08 11:28` and `2026-04-08 11:31`.
 
 ## First-Pass Scenario Table

@@ -59,6 +59,33 @@ Task 1 quality-fix pass complete: scenario docs now keep a stable contract/matri
 - `GET /queue/status` returned `HTTP 200` with queue-state payload.
 - Canonical chat rerun in this runtime returned upstream `HTTP 429`.
 
+### Sanitized Manual Evidence: `/queue/status` HTTP 200
+- Request shape (token sourced from env, no literal secrets):
+
+```bash
+curl "$TASK1_BASE_URL/queue/status" \
+  -H "Authorization: Bearer $TASK1_AUTH_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+- Observed sanitized response example (`HTTP 200`):
+
+```json
+{
+  "models": {
+    "glm-5.1": {
+      "active": 0,
+      "queued": 0,
+      "limit": 2,
+      "ceiling": 50,
+      "local_waiters": 0
+    }
+  }
+}
+```
+
+- Required queue fields present: `active`, `queued`, `limit`, `ceiling`, `local_waiters`.
+
 ## 2026-04-08 11:12 — task 1 fix pass complete
 - Closed Step 4 spec gap with concrete `/queue/status` `HTTP 200` evidence.
 - Kept scope limited to Task 1 artifacts only.
