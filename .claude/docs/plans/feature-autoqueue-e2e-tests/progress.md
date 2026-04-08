@@ -9,17 +9,127 @@ Last updated: 2026-04-08
 - Task 2: Build local load runner around canonical request — DONE
 - Task 3: Add queue-status and spend-log evidence collectors — DONE
 - Task 4: Add overload and timeout scenarios for local proof — DONE_WITH_CONCERNS
-- Task 5: Codify deterministic CI-safe regression subset — DONE_WITH_CONCERNS
+- Task 5: Codify deterministic CI-safe regression subset — DONE
 - Task 6: Produce final operator checklist — DONE_WITH_CONCERNS
 
 ## Current Work
-Task 6 operator checklist is now finalized with command checklist + release-gate rubric and fresh baseline/overflow rerun evidence. Canonical host caveat remains: `/queue/status` on `:4000` is still `404`, so queue-drain/status-under-load proof requires controlled runtime route exposure.
+Task 6 concern-closure pass is complete; unresolved concern-closure items remain for Task 4 and Task 6 due canonical-host `/queue/status` degradation.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
-## Timeline (Most Recent First)
+## Timeline (Recent Entries)
+
+## 2026-04-08 17:34 — task 6 concern-closure pass complete
+- Updated `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`:
+  - kept the final checklist command set and aligned operator notes with strict queue-drain semantics (`overflow`/`timeout` fail in strict mode when queue-drain proof is unavailable)
+  - refined pass/fail crash gate wording to key on `run_summary` presence + `transport_errors=0` (so strict expectation failures are not mislabeled as proxy crashes)
+  - updated canonical-host caveat from old `404` text to current `503` evidence for `/queue/status`
+- Required scenario reruns for this pass:
+  - `poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py --scenario baseline` (without env) -> exit `2` (`Missing auth token...`)
+  - `TASK1_BASE_URL=http://localhost:4000 TASK1_AUTH_TOKEN=sk-1234 TASK2_MODEL=glm-5 poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py --scenario baseline` -> exit `0`; `transport_errors=0`; `status_counts={"200":0,"503":1,"504":0}`; `bounded_failure_count=1`
+  - `TASK1_BASE_URL=http://localhost:4000 TASK1_AUTH_TOKEN=sk-1234 TASK2_MODEL=glm-5 poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py --scenario overflow` -> exit `7`; `bounded_failure_count=50`; `transport_errors=0`; `queue_drain_check.status=skipped`; `expectations_scope=not_met` (strict queue-drain proof blocked by degraded status route)
+  - `curl "$TASK1_BASE_URL/queue/status" ...` with same env -> `HTTP 503`, body `{"error":"Auto-queue unavailable for model queue-status"}`
+- Concern reconciliation:
+  - overload still demonstrates bounded failures (as required) but strict pass remains blocked on canonical `:4000` because `/queue/status` is degraded (`503`), so Task 6 remains `DONE_WITH_CONCERNS`.
+
+## 2026-04-08 17:34 — task 6 concern-closure pass start
+- Re-opened Task 6 for concern-closure with scope limited to:
+  - `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`
+  - `.claude/docs/plans/feature-autoqueue-e2e-tests/progress.md`
+  - empower state append logs (`findings.md`, `debugging.md`)
+- Planned actions:
+  - reconcile final operator checklist and pass/fail rubric text with current strict queue-drain semantics and canonical-host `/queue/status` degradation reality
+  - rerun required scenarios (`baseline`, `overflow`) and capture exact command evidence for this pass
+  - finalize Task 6 status with explicit remaining concern boundaries if canonical status-route proof is still unavailable
+
+## 2026-04-08 17:25 — task 5 concern-closure pass complete
+- Re-verified Task 5 target regression file with strict command:
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py -v`
+  - result: `3 passed`
+- Re-ran required adjacent suites with strict `-v`:
+  - `tests/test_litellm/proxy/middleware/test_auto_queue_middleware.py` -> `8 failed, 11 passed, 1 xpassed`
+  - `tests/test_litellm/proxy/middleware/test_auto_queue_reconciler.py` -> `3 failed, 2 passed` (`fakeredis` `unknown command 'evalsha'`)
+  - `tests/test_litellm/proxy/spend_tracking/test_spend_management_endpoints.py` -> `55 passed`
+- Reconciliation decision against Task 5 plan criteria (`PASS or only known pre-existing failures`):
+  - adjacent failures are unchanged signatures from prior evidence and outside Task 5 scoped file changes
+  - Task 5 status updated from `DONE_WITH_CONCERNS` to `DONE`.
+
+## 2026-04-08 17:24 — task 5 concern-closure pass start
+- Re-opened Task 5 for concern-closure validation with scope constrained to:
+  - `tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py`
+  - `.claude/docs/plans/feature-autoqueue-e2e-tests/progress.md`
+  - state append-only logs (`findings.md`, `debugging.md`) per empower protocol
+- Planned verification sequence:
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py -v`
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_middleware.py -v`
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_reconciler.py -v`
+  - `poetry run pytest tests/test_litellm/proxy/spend_tracking/test_spend_management_endpoints.py -v`
+
+## 2026-04-08 17:19 — task 4 code-quality fix pass complete
+- Updated `run_autoqueue_e2e.py`:
+  - hardened queue-status classification: `401/403` + malformed `200` now fail; only endpoint-unavailable/degraded conditions (`404`, `503`, no-response connection failures) classify as skipped
+  - replaced single-sample queue-drain check with bounded polling (`settle_seconds`, `poll_interval_seconds`) and convergence-to-idle semantics
+  - switched `--allow-queue-drain-skip` to explicit on/off CLI control (`BooleanOptionalAction`) so CLI can override env defaults with `--no-allow-queue-drain-skip`
+- Updated `autoqueue-e2e-scenarios.md` Task 4 contract to document strict/degraded classification and settle-window polling semantics.
+- Verification reruns:
+  - strict overflow (`AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=0`): exit `7`, `expectations_ok=false`, `expectations_scope=not_met`, `queue_drain_check.status=skipped`, `attempts=16`
+  - strict timeout (`AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=0`): exit `7`, `expectations_ok=false`, `expectations_scope=not_met`, `queue_drain_check.status=skipped`, `attempts=16`
+  - degraded overflow (`AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=1`): exit `0`, `expectations_ok=true`, `expectations_scope=partial`, `degraded_mode=true`
+  - degraded timeout (`AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=1`): exit `0`, `expectations_ok=true`, `expectations_scope=partial`, `degraded_mode=true`
+  - `python -m py_compile .../run_autoqueue_e2e.py`: pass
+- Concern remains unchanged: canonical `localhost:4000` still does not expose queue-drain proof (`/queue/status` returns `503`), so Task 4 remains `DONE_WITH_CONCERNS`.
+
+## 2026-04-08 17:12 — task 4 code-quality fix pass start
+- Re-opened Task 4 to apply code-quality review items:
+  - queue-status failure vs degraded classification
+  - queue-drain settle-window polling
+  - CLI on/off override for degraded mode
+  - refreshed docs and evidence entries
+
+## 2026-04-08 17:18 — task 4 spec concern-fix complete
+- Updated `run_autoqueue_e2e.py` strictness:
+  - queue-drain proof is now required by default for pressure scenarios (`overflow`, `timeout`)
+  - when queue-drain is `skipped`, expectations now fail unless degraded opt-out is explicitly enabled
+  - added degraded opt-out controls: `--allow-queue-drain-skip` / `AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=1`
+  - added summary contract fields to prevent silent full-pass claims: `expectations_scope` (`full|partial|not_met`) and `degraded_mode`
+- Updated `autoqueue-e2e-scenarios.md`:
+  - explicitly documents strict-vs-degraded queue-drain requirements for Task 4 scenarios
+  - defines that degraded runs are partial, never full pass
+- Verification reruns (canonical runtime with env auth/model):
+  - strict overflow: exit `7`, `expectations_ok=false`, `expectations_scope=not_met`, `expectation_error` indicates queue-drain skipped
+  - strict timeout: exit `7`, `expectations_ok=false`, `expectations_scope=not_met`, `expectation_error` indicates queue-drain skipped
+  - degraded overflow (`AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=1`): exit `0`, `expectations_ok=true`, `expectations_scope=partial`, `degraded_mode=true`
+  - degraded timeout (`AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=1`): exit `0`, `expectations_ok=true`, `expectations_scope=partial`, `degraded_mode=true`
+- Concern status:
+  - Task 4 remains `DONE_WITH_CONCERNS` because canonical-host queue-drain proof is still unavailable in this environment (`/queue/status` returns `503`), requiring explicit degraded-mode fallback.
+
+## 2026-04-08 17:13 — task 4 spec concern-fix pass start
+- Re-opened Task 4 after spec review to address:
+  - completion-status overstatement when queue-drain proof is unavailable on canonical runtime
+  - runner behavior that allowed `expectations_ok=true` while queue-drain verification was skipped
+  - explicit degraded-mode semantics/documentation for pressure scenarios
+
+## 2026-04-08 17:01 — task 4 concern-closure complete
+- Updated `run_autoqueue_e2e.py`:
+  - overflow/timeout now include deterministic queue-drain reporting via `queue_drain_check` (`passed|failed|skipped`) and fail only on definitive queue-drain failure
+  - timeout scenario now has explicit aggressive local-proof default timeout budget (`0.001s`) when `--timeout-seconds` is omitted
+  - expectation error text now documents timeout precondition boundary explicitly
+- Updated `autoqueue-e2e-scenarios.md`:
+  - documented timeout default budget and queue-drain boundary semantics
+  - clarified pressure-scenario handling when `/queue/status` is not observable in current runtime
+- Verification outcomes:
+  - `overflow` run: exit `0`, `requests=50`, `success_200=0`, `queue_full_count=50`, `timeout_count=0`, `transport_errors=0`, `expectations_ok=true`
+  - `timeout` run: exit `0`, `requests=20`, `success_200=0`, `queue_full_count=0`, `timeout_count=20`, `transport_errors=0`, `expectations_ok=true`
+  - both runs on `localhost:4000` recorded `queue_drain_check.status=skipped` with reason `/queue/status not available for verification (http_status=503)`, making environment boundary explicit instead of implicit.
+
+## 2026-04-08 16:53 — task 4 concern-closure start
+- Re-opened Task 4 for concern closure with scope limited to:
+  - `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`
+  - `.claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py`
+  - `.claude/docs/plans/feature-autoqueue-e2e-tests/progress.md`
+- Focus: make overflow/timeout behavior boundaries deterministic and spec-compliant even when canonical `:4000` lacks `/queue/status`.
 
 ## 2026-04-08 14:16 — task 6 completion (operator checklist + rerun evidence)
 - Updated `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`:

@@ -73,8 +73,8 @@ curl "$TASK1_BASE_URL/queue/status" \
 | 2 concurrent requests | 2 requests / concurrency 2 | 2x `200` | Endpoint responds `200`; transient non-zero `active` allowed during run, then drains to `active=0`, `queued=0` | Two spend events tied to the two requests; model `glm-5.1`; statuses `200`; timestamps in same run window |
 | 5 concurrent requests | 5 requests / concurrency 5 | 5x `200` under normal local load | Endpoint responds `200`; `active` rises during run; `queued` may briefly rise above 0 but drains to 0 post-run | Five spend events for `glm-5.1`; each has completion metadata and consistent auth key attribution |
 | 10 concurrent requests | 10 requests / concurrency 10 | Predominantly `200`; no unexpected `5xx`; bounded throttling (`429`) is acceptable only if queue ceilings are intentionally tight | Endpoint responds `200`; visible queue pressure (`queued` and/or `local_waiters` above 0) allowed during run, then drains | Ten terminal spend records (success or explicit throttled outcome) with per-request status and latency/cost fields |
-| queue-depth overflow run | 50 requests / concurrency 50 (`overflow`) | Bounded overload failures are required (`503` preferred; `429` acceptable). `200` responses are allowed but not required under aggressive overload. | Endpoint responds `200`; during pressure, `queued` and/or `local_waiters` rises; after load stops, queue drains to 0 | Spend logs show accepted requests and bounded failures with timestamps around overload window |
-| timeout run with intentionally slow upstream | 20 requests / concurrency 20 (`timeout`, `expect_timeout=true`) | At least one timeout-class failure (`504`) is required when intentionally slow conditions are active. `200` responses are allowed but not required under aggressive timeout budgets. | Endpoint responds `200`; `active` may stay elevated longer; queue should still drain after timeout horizon | Spend logs capture timeout/error status metadata plus latency values demonstrating slow-upstream behavior |
+| queue-depth overflow run | 50 requests / concurrency 50 (`overflow`) | Bounded overload failures are required (`503` preferred; `429` acceptable). `200` responses are allowed but not required under aggressive overload. | Strict mode: queue-drain proof is required (`queue_drain_check=passed`). Degraded mode: if status route is unavailable, run may continue only with `--allow-queue-drain-skip` and is marked partial. | Spend logs show accepted requests and bounded failures with timestamps around overload window |
+| timeout run with intentionally slow upstream | 20 requests / concurrency 20 (`timeout`, `expect_timeout=true`, default runner timeout budget `0.001s`) | At least one timeout-class failure (`504`) is required when intentionally slow conditions are active. `200` responses are allowed but not required under aggressive timeout budgets. | Strict mode: queue-drain proof is required (`queue_drain_check=passed`). Degraded mode: if status route is unavailable, run may continue only with `--allow-queue-drain-skip` and is marked partial. | Spend logs capture timeout/error status metadata plus latency values demonstrating slow-upstream behavior |
 | post-run queue drain verification | 0 completion requests / concurrency 0 (status polling only) | `200` from status polls | Repeated polls return `200`; `active=0`, `queued=0`, `local_waiters=0`; row includes queue state fields (`active`, `queued`, `limit`, `ceiling`, `local_waiters`) when `glm-5.1` is present | No new completion spend entries should appear after final scenario window closes |
 | spend-log metadata verification | 0 completion requests / concurrency 0 (artifact audit only) | N/A for completion API; log retrieval path should be successful | Queue status unchanged from final drained state | Validate required metadata fields across recorded runs: model, request id, auth/key attribution, status code, latency, and spend/cost tokens |
 
@@ -83,7 +83,8 @@ curl "$TASK1_BASE_URL/queue/status" \
 - Timeout assertions require an intentionally slow runtime path.
 - For local proof runs, use one of:
   - intentionally slow upstream model/runtime configuration, or
-  - an aggressive client timeout budget (for example, low `--timeout-seconds`) to force timeout behavior.
+  - an aggressive client timeout budget to force timeout behavior.
+- Runner default for `--scenario timeout` is `0.001` seconds when `--timeout-seconds` is omitted (aggressive local-proof budget to force timeout-class behavior).
 - Without this precondition, timeout scenario assertions are expected to fail by design.
 
 ## Task 4 Assertion Contract (Runner)
@@ -91,6 +92,17 @@ curl "$TASK1_BASE_URL/queue/status" \
 - For `overflow` and `timeout`, assertion checks fail when `transport_errors > 0` unless an explicit per-scenario override allows transport errors.
 - This is the crash-safety guard for requirement alignment: overload/timeout may fail requests in bounded ways, but the proxy process must not crash.
 - Runner summary uses `bounded_failure_count` for `429+503`; `queue_full_count` remains as a backwards-compatible alias.
+- Runner now emits `queue_drain_check` for pressure scenarios (`overflow`/`timeout`) with deterministic boundary states:
+  - `passed`: `/queue/status` is available and target model drains to `active=0`, `queued=0`, `local_waiters=0`.
+  - `failed`: auth/permission errors (`401`/`403`), unexpected non-`200` statuses, malformed `200` response schema, or queue failing to converge to idle before settle deadline.
+  - `skipped`: endpoint-unavailable/degraded conditions where proof is impossible (for example `404`, `503`, or connection-level failures with no HTTP response).
+- Default behavior (strict): pressure-scenario expectations fail when `queue_drain_check.status` is `failed` **or** `skipped`.
+- Queue-drain uses bounded polling, not a single sample:
+  - settle window: `--queue-drain-settle-seconds` (env `AUTOQ_QUEUE_DRAIN_SETTLE_SECONDS`, default `15`)
+  - poll interval: `--queue-drain-poll-interval-seconds` (env `AUTOQ_QUEUE_DRAIN_POLL_INTERVAL_SECONDS`, default `1`)
+- Degraded-environment opt-out: pass `--allow-queue-drain-skip` (or set `AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=1`) to allow `skipped` queue-drain checks; pass `--no-allow-queue-drain-skip` to force strict mode even when env default is enabled.
+- When degraded opt-out is used and queue-drain is skipped, runner marks summary as partial (`expectations_scope=partial`, `degraded_mode=true`) so the run is never reported as a full pass.
+- Full pass requires `expectations_ok=true` and `expectations_scope=full` (which implies queue-drain `passed` for pressure scenarios).
 
 ## Final Operator Checklist (Task 6)
 
@@ -140,15 +152,19 @@ poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/collect_spend_l
   --output-file /tmp/autoqueue_spend_evidence.json
 ```
 
+Strict-mode note:
+- `overflow`/`timeout` commands require queue-drain proof and return non-zero when `/queue/status` is unavailable/degraded.
+- For degraded-environment evidence collection only, rerun with `AUTOQ_ALLOW_QUEUE_DRAIN_SKIP=1` and treat outcomes as partial (`expectations_scope=partial`), never full pass.
+
 ### Pass/Fail rubric (release gates)
 
 | Gate | Pass condition | Fail condition |
 | --- | --- | --- |
-| no proxy crash | all scenario commands return JSON `run_summary` with `transport_errors=0` | command exits non-zero due transport/runtime failure, or `transport_errors>0` |
+| no proxy crash | each scenario emits JSON `run_summary` and reports `transport_errors=0` | no `run_summary` is emitted due runtime failure, or `transport_errors>0` |
 | queue drains after each run | post-run queue snapshots show `active=0`, `queued=0`, `local_waiters=0` for target model | queue stays non-idle after post-run polling horizon |
-| status endpoint available under load | `/queue/status` responds `HTTP 200` before/during/after load polling window | `/queue/status` returns non-`200` (including `404`) or times out during load window |
+| status endpoint available under load | `/queue/status` responds `HTTP 200` before/during/after load polling window | `/queue/status` returns non-`200` (including `503`/`404`) or times out during load window |
 | spend metadata present when queueing occurs | spend evidence includes at least one row with `metadata.autoq` for queued/admitted events in load window | no matching `metadata.autoq` rows when queueing pressure was observed |
 
 ### Operational caveat (canonical host)
 
-In this environment, canonical host `http://localhost:4000` still returns `HTTP 404` for `/queue/status` (`{"detail":"Not Found"}`), so queue-drain and status-under-load gates cannot be proven on `:4000` via endpoint evidence. Use the controlled runtime profile (`http://localhost:4001`) for those two gates when the route is exposed there.
+In this environment, canonical host `http://localhost:4000` currently returns `HTTP 503` for `/queue/status` (`{"error":"Auto-queue unavailable for model queue-status"}`), so queue-drain and status-under-load gates cannot be proven on `:4000` via endpoint evidence. Use the controlled runtime profile (`http://localhost:4001`) for those two gates when the route is exposed there.
