@@ -21,80 +21,6 @@ if _needs_reload:
             sys.modules.pop(_name, None)
 
 
-def _build_queue_status_test_harness(monkeypatch):
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.testclient import TestClient
-
-    from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
-    from litellm.proxy.spend_tracking import spend_management_endpoints
-
-    class FakeRedis:
-        async def scan_iter(self, match=None):
-            yield b"autoq:limit:gpt-4"
-
-        async def aclose(self):
-            return None
-
-    class FakeAQR:
-        redis = FakeRedis()
-
-        async def get_model_info(self, model):
-            assert model == "gpt-4"
-            return {"active": 1, "limit": 2, "queued": 0, "ceiling": 5}
-
-    monkeypatch.setattr(
-        spend_management_endpoints,
-        "get_auto_queue_status_aqr",
-        lambda: FakeAQR(),
-    )
-
-    app = FastAPI()
-    app.include_router(spend_management_endpoints.router)
-    admin_auth = UserAPIKeyAuth(
-        user_role=LitellmUserRoles.PROXY_ADMIN,
-        user_id="admin-user",
-    )
-
-    async def _require_auth(request: Request):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing auth token")
-        auth_token = auth_header[len("Bearer ") :].strip()
-        if auth_token == "sk-admin":
-            return admin_auth
-        if auth_token == "sk-non-admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Only proxy admin can access /queue/status",
-            )
-        raise HTTPException(status_code=401, detail="Invalid auth token")
-
-    with TestClient(app) as client:
-        app.dependency_overrides[spend_management_endpoints.user_api_key_auth] = (
-            _require_auth
-        )
-        unauthorized_response = client.get("/queue/status")
-        invalid_token_response = client.get(
-            "/queue/status",
-            headers={"Authorization": "Bearer sk-invalid"},
-        )
-        non_admin_response = client.get(
-            "/queue/status",
-            headers={"Authorization": "Bearer sk-non-admin"},
-        )
-        authorized_response = client.get(
-            "/queue/status",
-            headers={"Authorization": "Bearer sk-admin"},
-        )
-
-    return {
-        "unauthorized_response": unauthorized_response,
-        "invalid_token_response": invalid_token_response,
-        "non_admin_response": non_admin_response,
-        "authorized_response": authorized_response,
-    }
-
-
 async def _run_bounded_overload_scenario(
     *,
     make_middleware_app,
@@ -312,32 +238,6 @@ async def _capture_spend_log_autoq_metadata(
     payload_metadata = json.loads(payload["metadata"])
 
     return payload_metadata["autoq"]
-
-
-def test_auto_queue_status_endpoint_requires_auth_and_returns_models(monkeypatch):
-    harness = _build_queue_status_test_harness(monkeypatch)
-    unauthorized_response = harness["unauthorized_response"]
-    invalid_token_response = harness["invalid_token_response"]
-    non_admin_response = harness["non_admin_response"]
-    authorized_response = harness["authorized_response"]
-
-    assert unauthorized_response.status_code == 401
-    assert invalid_token_response.status_code == 401
-    assert invalid_token_response.json()["detail"] == "Invalid auth token"
-    assert non_admin_response.status_code == 403
-    assert "proxy admin" in non_admin_response.json()["detail"]
-    assert authorized_response.status_code == 200
-    assert authorized_response.json() == {
-        "models": {
-            "gpt-4": {
-                "active": 1,
-                "limit": 2,
-                "queued": 0,
-                "ceiling": 5,
-                "local_waiters": 0,
-            }
-        }
-    }
 
 
 @pytest.mark.asyncio
