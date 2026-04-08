@@ -51,8 +51,9 @@ curl "$TASK1_BASE_URL/queue/status" \
 
 ## Environment Contract (Required Assumptions)
 
-- Task 1 validation target is set by `$TASK1_BASE_URL` from the active validation profile.
-- Canonical request shape reference originated from `localhost:4000`, but runtime validation is profile-driven.
+- proxy listening on localhost:4000
+- canonical request shape originated from the localhost:4000 request path
+- for reproducible operator reruns, an additional controlled validation runtime is selected via `$TASK1_BASE_URL` from the active validation profile
 - AUTOQ_ENABLED=true
 - Redis reachable by proxy
 - auth key valid for /v1/chat/completions and /queue/status
