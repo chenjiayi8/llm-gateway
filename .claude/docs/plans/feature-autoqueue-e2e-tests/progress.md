@@ -10,16 +10,31 @@ Last updated: 2026-04-08
 - Task 3: Add queue-status and spend-log evidence collectors — DONE
 - Task 4: Add overload and timeout scenarios for local proof — DONE_WITH_CONCERNS
 - Task 5: Codify deterministic CI-safe regression subset — DONE_WITH_CONCERNS
-- Task 6: Produce final operator checklist — NOT STARTED
+- Task 6: Produce final operator checklist — DONE_WITH_CONCERNS
 
 ## Current Work
-Task 5 hardening follow-up landed after the `dff5d587dd` base fix; deterministic regression file passes with strict `-v` command evidence after deadlock/auth-semantic fixes, while adjacent middleware/reconciler suites still show pre-existing `fakeredis`/Redis compatibility failures in this environment.
+Task 6 operator checklist is now finalized with command checklist + release-gate rubric and fresh baseline/overflow rerun evidence. Canonical host caveat remains: `/queue/status` on `:4000` is still `404`, so queue-drain/status-under-load proof requires controlled runtime route exposure.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 14:16 — task 6 completion (operator checklist + rerun evidence)
+- Updated `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`:
+  - added final operator checklist commands for baseline request, queue status, burst run, overflow run, timeout run, and spend-log evidence collection
+  - added pass/fail rubric gates for crash safety, queue drain, status endpoint availability under load, and spend metadata presence during queueing
+  - documented operational caveat for canonical host `http://localhost:4000` where `/queue/status` currently returns `404`
+- Reran required scenarios using runtime-valid profile:
+  - `TASK1_BASE_URL=http://localhost:4000 TASK1_AUTH_TOKEN=<env> TASK2_MODEL=glm-5 poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py --scenario baseline`
+    - exit `0`; summary: `success_200=1`, `transport_errors=0`, `expectations_ok=true`
+  - `TASK1_BASE_URL=http://localhost:4000 TASK1_AUTH_TOKEN=<env> TASK2_MODEL=glm-5 poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py --scenario overflow`
+    - exit `0`; summary: `success_200=3`, `other_status_counts={"429":47}`, `bounded_failure_count=47`, `transport_errors=0`, `expectations_ok=true`
+- Queue-status caveat reconfirmed:
+  - `curl http://localhost:4000/queue/status ...` -> `HTTP 404`, body `{"detail":"Not Found"}`
+- Concern:
+  - canonical host cannot currently satisfy queue-drain/status-under-load gates via `/queue/status`; controlled runtime (`:4001`) remains the operational fallback for those two gates.
 
 ## 2026-04-08 20:14 — task 5 hardening pass at `dff5d587dd` (deadlock + auth semantics + strict evidence)
 - Applied hardening updates in `tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py`:

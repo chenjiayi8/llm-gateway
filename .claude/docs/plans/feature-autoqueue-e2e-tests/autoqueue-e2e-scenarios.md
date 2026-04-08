@@ -91,3 +91,64 @@ curl "$TASK1_BASE_URL/queue/status" \
 - For `overflow` and `timeout`, assertion checks fail when `transport_errors > 0` unless an explicit per-scenario override allows transport errors.
 - This is the crash-safety guard for requirement alignment: overload/timeout may fail requests in bounded ways, but the proxy process must not crash.
 - Runner summary uses `bounded_failure_count` for `429+503`; `queue_full_count` remains as a backwards-compatible alias.
+
+## Final Operator Checklist (Task 6)
+
+Use env-sourced auth and runtime values only:
+
+```bash
+export TASK1_BASE_URL="${TASK1_BASE_URL:-http://localhost:4000}"
+export TASK1_AUTH_TOKEN="${TASK1_AUTH_TOKEN:?set TASK1_AUTH_TOKEN}"
+export TASK2_MODEL="${TASK2_MODEL:-glm-5}"
+```
+
+### Required commands
+
+```bash
+# 1) Baseline request command (frozen request shape)
+curl "$TASK1_BASE_URL/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TASK1_AUTH_TOKEN" \
+  -d '{
+    "model": "'"$TASK2_MODEL"'",
+    "messages": [{"role": "user", "content": "Hello, who are you!"}]
+  }'
+
+# 2) Queue status command
+curl "$TASK1_BASE_URL/queue/status" \
+  -H "Authorization: Bearer $TASK1_AUTH_TOKEN" \
+  -H "Content-Type: application/json"
+
+# 3) Burst run command
+poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py \
+  --scenario burst-10
+
+# 4) Overflow run command
+poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py \
+  --scenario overflow
+
+# 5) Timeout run command
+poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py \
+  --scenario timeout \
+  --timeout-seconds 2
+
+# 6) Spend-log evidence command
+poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/collect_spend_log_evidence.py \
+  --model "$TASK2_MODEL" \
+  --start-epoch <start_epoch_seconds> \
+  --end-epoch <end_epoch_seconds> \
+  --output-file /tmp/autoqueue_spend_evidence.json
+```
+
+### Pass/Fail rubric (release gates)
+
+| Gate | Pass condition | Fail condition |
+| --- | --- | --- |
+| no proxy crash | all scenario commands return JSON `run_summary` with `transport_errors=0` | command exits non-zero due transport/runtime failure, or `transport_errors>0` |
+| queue drains after each run | post-run queue snapshots show `active=0`, `queued=0`, `local_waiters=0` for target model | queue stays non-idle after post-run polling horizon |
+| status endpoint available under load | `/queue/status` responds `HTTP 200` before/during/after load polling window | `/queue/status` returns non-`200` (including `404`) or times out during load window |
+| spend metadata present when queueing occurs | spend evidence includes at least one row with `metadata.autoq` for queued/admitted events in load window | no matching `metadata.autoq` rows when queueing pressure was observed |
+
+### Operational caveat (canonical host)
+
+In this environment, canonical host `http://localhost:4000` still returns `HTTP 404` for `/queue/status` (`{"detail":"Not Found"}`), so queue-drain and status-under-load gates cannot be proven on `:4000` via endpoint evidence. Use the controlled runtime profile (`http://localhost:4001`) for those two gates when the route is exposed there.
