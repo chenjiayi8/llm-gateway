@@ -59,20 +59,38 @@ def _build_queue_status_test_harness(monkeypatch):
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="Missing auth token")
-        return admin_auth
+        auth_token = auth_header[len("Bearer ") :].strip()
+        if auth_token == "sk-admin":
+            return admin_auth
+        if auth_token == "sk-non-admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only proxy admin can access /queue/status",
+            )
+        raise HTTPException(status_code=401, detail="Invalid auth token")
 
     with TestClient(app) as client:
         app.dependency_overrides[spend_management_endpoints.user_api_key_auth] = (
             _require_auth
         )
         unauthorized_response = client.get("/queue/status")
+        invalid_token_response = client.get(
+            "/queue/status",
+            headers={"Authorization": "Bearer sk-invalid"},
+        )
+        non_admin_response = client.get(
+            "/queue/status",
+            headers={"Authorization": "Bearer sk-non-admin"},
+        )
         authorized_response = client.get(
             "/queue/status",
-            headers={"Authorization": "Bearer sk-test"},
+            headers={"Authorization": "Bearer sk-admin"},
         )
 
     return {
         "unauthorized_response": unauthorized_response,
+        "invalid_token_response": invalid_token_response,
+        "non_admin_response": non_admin_response,
         "authorized_response": authorized_response,
     }
 
@@ -87,6 +105,7 @@ async def _run_bounded_overload_scenario(
     from litellm.proxy.middleware.auto_queue_scripts import AdmitDecision, ReleaseTransfer
     from litellm.proxy.middleware.auto_queue_state import AutoQueueRequestState
 
+    wait_timeout_seconds = 3
     allow_active_request_to_finish = asyncio.Event()
     active_request_started = asyncio.Event()
 
@@ -140,7 +159,10 @@ async def _run_bounded_overload_scenario(
     async def slow_handler(request):
         await request.body()
         active_request_started.set()
-        await allow_active_request_to_finish.wait()
+        await asyncio.wait_for(
+            allow_active_request_to_finish.wait(),
+            timeout=wait_timeout_seconds,
+        )
         return JSONResponse({"ok": True})
 
     app = make_middleware_app(slow_handler, aqr=aqr, enabled=True, max_queue_depth=1)
@@ -152,20 +174,46 @@ async def _run_bounded_overload_scenario(
             json={"model": "gpt-4", "messages": []},
         )
     )
-    await active_request_started.wait()
-
-    overloaded_responses = await asyncio.gather(
-        client.post(
-            "/v1/chat/completions",
-            json={"model": "gpt-4", "messages": []},
-        ),
-        client.post(
-            "/v1/chat/completions",
-            json={"model": "gpt-4", "messages": []},
-        ),
-    )
-    allow_active_request_to_finish.set()
-    admitted_response = await admitted_task
+    overloaded_responses = None
+    admitted_response = None
+    cleanup_should_reraise = False
+    try:
+        await asyncio.wait_for(
+            active_request_started.wait(),
+            timeout=wait_timeout_seconds,
+        )
+        overloaded_responses = await asyncio.wait_for(
+            asyncio.gather(
+                client.post(
+                    "/v1/chat/completions",
+                    json={"model": "gpt-4", "messages": []},
+                ),
+                client.post(
+                    "/v1/chat/completions",
+                    json={"model": "gpt-4", "messages": []},
+                ),
+            ),
+            timeout=wait_timeout_seconds,
+        )
+        allow_active_request_to_finish.set()
+        admitted_response = await asyncio.wait_for(
+            admitted_task,
+            timeout=wait_timeout_seconds,
+        )
+    except Exception:
+        cleanup_should_reraise = True
+        raise
+    finally:
+        allow_active_request_to_finish.set()
+        if not admitted_task.done():
+            admitted_task.cancel()
+        try:
+            await admitted_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            if not cleanup_should_reraise:
+                raise
 
     return {
         "admitted_status": admitted_response.status_code,
@@ -269,9 +317,15 @@ async def _capture_spend_log_autoq_metadata(
 def test_auto_queue_status_endpoint_requires_auth_and_returns_models(monkeypatch):
     harness = _build_queue_status_test_harness(monkeypatch)
     unauthorized_response = harness["unauthorized_response"]
+    invalid_token_response = harness["invalid_token_response"]
+    non_admin_response = harness["non_admin_response"]
     authorized_response = harness["authorized_response"]
 
     assert unauthorized_response.status_code == 401
+    assert invalid_token_response.status_code == 401
+    assert invalid_token_response.json()["detail"] == "Invalid auth token"
+    assert non_admin_response.status_code == 403
+    assert "proxy admin" in non_admin_response.json()["detail"]
     assert authorized_response.status_code == 200
     assert authorized_response.json() == {
         "models": {
