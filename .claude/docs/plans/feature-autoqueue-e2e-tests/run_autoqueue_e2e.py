@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local auto-queue E2E load runner for canonical glm-5.1 requests."""
+"""Local auto-queue E2E load runner for canonical chat-completion requests."""
 
 from __future__ import annotations
 
@@ -21,17 +21,12 @@ SCENARIOS = {
 }
 
 
-def build_payload() -> dict[str, Any]:
+def build_payload(model: str) -> dict[str, Any]:
     # Keep canonical payload shape unchanged.
-    payload: dict[str, Any] = {
-        "model": "glm-5.1",
+    return {
+        "model": model,
         "messages": [{"role": "user", "content": "Hello, who are you!"}],
     }
-    mock_response = os.getenv("TASK2_MOCK_RESPONSE")
-    if mock_response:
-        # Optional deterministic local test path; default payload remains canonical.
-        payload["mock_response"] = mock_response
-    return payload
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,6 +41,11 @@ def parse_args() -> argparse.Namespace:
         "--auth-token",
         default=os.getenv("TASK1_AUTH_TOKEN") or os.getenv("TASK1_CANONICAL_AUTH_TOKEN"),
         help="Bearer token (default: TASK1_AUTH_TOKEN|TASK1_CANONICAL_AUTH_TOKEN)",
+    )
+    parser.add_argument(
+        "--model",
+        default=os.getenv("TASK2_MODEL") or "glm-5.1",
+        help="Model for baseline/load requests (default: TASK2_MODEL|glm-5.1)",
     )
     parser.add_argument("--timeout-seconds", type=float, default=60.0)
     parser.add_argument("--excerpt-chars", type=int, default=240)
@@ -123,7 +123,7 @@ def main() -> int:
     request_count = scenario_cfg["requests"]
     concurrency = scenario_cfg["concurrency"]
     endpoint = f"{args.base_url.rstrip('/')}/v1/chat/completions"
-    payload = build_payload()
+    payload = build_payload(args.model)
     payload_bytes = json.dumps(payload).encode("utf-8")
 
     print(
@@ -134,6 +134,7 @@ def main() -> int:
                 "requests": request_count,
                 "concurrency": concurrency,
                 "endpoint": endpoint,
+                "model": args.model,
                 "timeout_seconds": args.timeout_seconds,
             }
         )
@@ -181,6 +182,7 @@ def main() -> int:
         "requests": request_count,
         "concurrency": concurrency,
         "endpoint": endpoint,
+        "model": args.model,
         "status_counts": status_counts,
         "other_status_counts": other_status_counts,
         "transport_errors": transport_errors,
