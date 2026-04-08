@@ -22,6 +22,48 @@ curl http://localhost:4000/v1/chat/completions \
 - auth key valid for /v1/chat/completions and /queue/status
 - model path capable of successful responses under low load
 
+## Operator Validation Evidence (Task 1 Step 3/4)
+
+### Runtime A: existing host process on `localhost:4000` (contract mismatch)
+
+- Process evidence:
+  - `ps -ef | rg '/usr/bin/litellm --port 4000'`
+  - Result: `root ... /usr/bin/python3.13 /usr/bin/litellm --port 4000`
+- Endpoint check:
+  - `curl http://localhost:4000/queue/status ...`
+  - Result: `HTTP 404` with body `{"detail":"Not Found"}`
+- Interpretation: the currently running host-managed proxy on `:4000` does not expose `/queue/status`.
+
+### Runtime B: controlled local proxy for reproducible Task 1 validation
+
+- Temporary local dependencies used for reproducibility:
+  - Redis container: `docker run -d --name autoq-task1-redis -p 6379:6379 redis:7-alpine`
+  - Postgres container: `docker run -d --name autoq-task1-postgres -p 55432:5432 ... postgres:16-alpine`
+- Controlled proxy launch (repo code + explicit auto-queue env):
+
+```bash
+AUTOQ_ENABLED=true \
+REDIS_HOST=127.0.0.1 REDIS_PORT=6379 REDIS_DB=0 \
+AUTOQ_REDIS_HOST=127.0.0.1 AUTOQ_REDIS_PORT=6379 AUTOQ_REDIS_DB=3 \
+DATABASE_URL='postgresql://litellm:litellm@127.0.0.1:55432/litellm' \
+poetry run python -m litellm.proxy.proxy_cli \
+  --config /tmp/autoqueue_task1_proxy.yaml \
+  --port 4010
+```
+
+- Manual baseline request in controlled runtime:
+  - `curl http://localhost:4010/v1/chat/completions ...`
+  - Result: `HTTP 200` with valid completion payload for `glm-5.1`.
+- Manual queue-status request in controlled runtime:
+  - `curl http://localhost:4010/queue/status ...`
+  - Result: `HTTP 200` with payload:
+
+```json
+{"models":{"glm-5.1":{"active":0,"limit":3,"queued":0,"ceiling":50,"local_waiters":0}}}
+```
+
+- Conclusion: `/queue/status` contract is valid in the intended auto-queue runtime; the prior Task 1 miss was due to hitting a different pre-existing process bound to `:4000`.
+
 ## First-Pass Scenario Table
 
 | Scenario name | Request count / concurrency | Expected status code mix | Expected `/queue/status` behavior | Expected spend-log evidence |
@@ -34,4 +76,3 @@ curl http://localhost:4000/v1/chat/completions \
 | timeout run with intentionally slow upstream | 10 requests / concurrency 5 (using intentionally slowed upstream path) | Mix of `200` and timeout-class failures (`408`/`504` or gateway timeout equivalent) | Endpoint responds `200`; `active` remains elevated longer; `queued` may accumulate then clears after timeout horizon | Spend logs capture timeout/error status metadata plus latency values demonstrating slow-upstream behavior |
 | post-run queue drain verification | 0 completion requests / concurrency 0 (status polling only) | `200` from status polls | Repeated polls return `200`; `active=0`, `queued=0`, `local_waiters=0`; row includes queue state fields (`active`, `queued`, `limit`, `ceiling`, `local_waiters`) when `glm-5.1` is present | No new completion spend entries should appear after final scenario window closes |
 | spend-log metadata verification | 0 completion requests / concurrency 0 (artifact audit only) | N/A for completion API; log retrieval path should be successful | Queue status unchanged from final drained state | Validate required metadata fields across recorded runs: model, request id, auth/key attribution, status code, latency, and spend/cost tokens |
-
