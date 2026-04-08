@@ -19,7 +19,7 @@ Task 6 operator checklist is now finalized with command checklist + release-gate
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
-## Timeline (Chronological)
+## Timeline (Most Recent First)
 
 ## 2026-04-08 14:16 — task 6 completion (operator checklist + rerun evidence)
 - Updated `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`:
