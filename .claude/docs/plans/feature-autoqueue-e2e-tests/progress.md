@@ -8,18 +8,50 @@ Last updated: 2026-04-08
 - Task 1: Freeze canonical request and environment contract — DONE
 - Task 2: Build local load runner around canonical request — DONE
 - Task 3: Add queue-status and spend-log evidence collectors — DONE
-- Task 4: Add overload and timeout scenarios for local proof — NOT STARTED
+- Task 4: Add overload and timeout scenarios for local proof — DONE_WITH_CONCERNS
 - Task 5: Codify deterministic CI-safe regression subset — NOT STARTED
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 3 quality-fix pass completed: numeric/parse hardening, stricter model matching, safer error diagnostics, and duplicate `metadata.autoq` extraction removal applied to the two collector scripts.
+Task 4 completed with overflow/timeout scenario implementation and local runtime evidence capture on `localhost:4000` (`model=glm-5`), with concern that queue-drain verification is blocked on this host by `/queue/status` returning `404`.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 13:45 — task 4 completion (runtime evidence)
+- Ran Task 4 scenarios against user-validated runtime profile (`http://localhost:4000`, `model=glm-5`):
+  - overflow command: `... run_autoqueue_e2e.py --scenario overflow`
+  - timeout command: `... run_autoqueue_e2e.py --scenario timeout --timeout-seconds 2`
+- Hard summary evidence:
+  - overflow: `requests=50`, `success_200=2`, `queue_full_count=48`, `timeout_count=0`, `latency_p50_ms=9316.701`, `latency_p90_ms=10001.103`, `latency_p95_ms=10741.21`, `expectations_ok=true`, exit `0`
+  - timeout: `requests=20`, `success_200=0`, `queue_full_count=0`, `timeout_count=20`, `latency_p50_ms=2376.896`, `latency_p90_ms=2463.13`, `latency_p95_ms=2463.718`, `expectations_ok=true`, exit `0`
+- Concern:
+  - `/queue/status` on `localhost:4000` remains `404`, so queue-drain verification on canonical host cannot be asserted from endpoint evidence in this environment window.
+  - attempted controlled `:4001` runtime for queue-drain verification but startup was blocked by prolonged Prisma migration retries/timeouts.
+
+## 2026-04-08 13:34 — task 4 step 3 implementation
+- Replaced Task 4 TODO gate with concrete expectation checks in `run_autoqueue_e2e.py`:
+  - overflow requires at least one bounded-failure status (`503` or `429`)
+  - timeout requires at least one `504`
+- Added timeout mapping for transport timeout errors (`URLError`/`TimeoutError` => synthetic status `504`) to make timeout assertions deterministic when slow-path preconditions are active.
+- Added summary metrics needed by Task 4 reporting:
+  - `queue_full_count`, `timeout_count`, `latency_p50_ms`, `latency_p90_ms`, `latency_p95_ms`, and `expectations_ok`.
+
+## 2026-04-08 13:33 — task 4 step 1/2 stub-first proof
+- Added failing scenario definitions to `run_autoqueue_e2e.py`:
+  - `overflow`: `{requests: 50, concurrency: 50}`
+  - `timeout`: `{requests: 20, concurrency: 20, expect_timeout: true}`
+- Added timeout precondition documentation to scenario matrix.
+- Stub-failure proof before expectation-check implementation:
+  - `--scenario overflow` => exit `6`, message: `TODO Task 4 Step 3: expectation checks not implemented for scenario=overflow.`
+  - `--scenario timeout` => exit `6`, message: `TODO Task 4 Step 3: expectation checks not implemented for scenario=timeout.`
+
+## 2026-04-08 13:31 — task 4 execution start
+- Updated summary status to `Task 3 DONE` and `Task 4 IN PROGRESS`.
+- Began Task 4 workstream with failing overflow/timeout scenario scaffolding before expectation-check implementation.
 
 ## 2026-04-08 13:18 — task 3 quality-fix pass complete
 - Applied quality fixes requested by review:

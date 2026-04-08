@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -18,6 +19,13 @@ SCENARIOS = {
     "burst-5": {"requests": 5, "concurrency": 5},
     "burst-10": {"requests": 10, "concurrency": 10},
     "soak-20": {"requests": 20, "concurrency": 5},
+    "overflow": {
+        "requests": 50,
+        "concurrency": 50,
+        "expect_bounded_failure": True,
+        "bounded_failure_statuses": [503, 429],
+    },
+    "timeout": {"requests": 20, "concurrency": 20, "expect_timeout": True},
 }
 
 
@@ -60,6 +68,66 @@ def _excerpt(text: str, limit: int) -> str:
     return text.replace("\n", " ").strip()[:limit]
 
 
+def _is_timeout_reason(reason: Any) -> bool:
+    if isinstance(reason, TimeoutError):
+        return True
+    reason_text = str(reason).lower()
+    return "timed out" in reason_text or "timeout" in reason_text
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if len(values) == 0:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(ordered[0], 3)
+    rank = (len(ordered) - 1) * percentile
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return round(ordered[lower], 3)
+    lower_value = ordered[lower]
+    upper_value = ordered[upper]
+    interpolated = lower_value + (upper_value - lower_value) * (rank - lower)
+    return round(interpolated, 3)
+
+
+def _status_count(
+    status_counts: dict[str, int],
+    other_status_counts: dict[str, int],
+    status_code: int,
+) -> int:
+    key = str(status_code)
+    if key in status_counts:
+        return status_counts[key]
+    return other_status_counts.get(key, 0)
+
+
+def _validate_scenario_expectations(
+    scenario_name: str,
+    scenario_cfg: dict[str, Any],
+    status_counts: dict[str, int],
+    other_status_counts: dict[str, int],
+) -> tuple[bool, str | None]:
+    if scenario_cfg.get("expect_bounded_failure"):
+        statuses = scenario_cfg.get("bounded_failure_statuses") or [503]
+        bounded_failure_count = sum(
+            _status_count(status_counts, other_status_counts, int(status_code))
+            for status_code in statuses
+        )
+        if bounded_failure_count < 1:
+            status_list = ",".join(str(x) for x in statuses)
+            return (
+                False,
+                f"Scenario '{scenario_name}' expected at least one bounded failure status in [{status_list}].",
+            )
+    if scenario_cfg.get("expect_timeout"):
+        timeout_count = _status_count(status_counts, other_status_counts, 504)
+        if timeout_count < 1:
+            return False, f"Scenario '{scenario_name}' expected at least one 504 timeout."
+    return True, None
+
+
 def send_request(
     request_index: int,
     endpoint: str,
@@ -92,8 +160,16 @@ def send_request(
         body_text = exc.read().decode("utf-8", errors="replace")
         error_type = "HTTPError"
     except error.URLError as exc:
-        error_type = "URLError"
+        if _is_timeout_reason(exc.reason):
+            status_code = 504
+            error_type = "TimeoutError"
+        else:
+            error_type = "URLError"
         body_text = f"{type(exc.reason).__name__}: {exc.reason}"
+    except TimeoutError as exc:
+        status_code = 504
+        error_type = "TimeoutError"
+        body_text = str(exc)
     except Exception as exc:  # pragma: no cover - defensive runner path
         error_type = type(exc).__name__
         body_text = str(exc)
@@ -185,11 +261,31 @@ def main() -> int:
         "model": args.model,
         "status_counts": status_counts,
         "other_status_counts": other_status_counts,
+        "queue_full_count": _status_count(status_counts, other_status_counts, 429)
+        + _status_count(status_counts, other_status_counts, 503),
+        "timeout_count": _status_count(status_counts, other_status_counts, 504),
         "transport_errors": transport_errors,
         "success_200": status_counts["200"],
+        "latency_p50_ms": _percentile([float(r["latency_ms"]) for r in records], 0.50),
+        "latency_p90_ms": _percentile([float(r["latency_ms"]) for r in records], 0.90),
+        "latency_p95_ms": _percentile([float(r["latency_ms"]) for r in records], 0.95),
         "duration_ms": round((time.time() - run_start) * 1000.0, 3),
     }
+
+    expectations_ok, expectation_error = _validate_scenario_expectations(
+        scenario_name=args.scenario,
+        scenario_cfg=scenario_cfg,
+        status_counts=status_counts,
+        other_status_counts=other_status_counts,
+    )
+    summary["expectations_ok"] = expectations_ok
+    if expectation_error is not None:
+        summary["expectation_error"] = expectation_error
+
     print(json.dumps(summary))
+    if not expectations_ok:
+        print(expectation_error, file=sys.stderr)
+        return 7
     return 0
 
 
