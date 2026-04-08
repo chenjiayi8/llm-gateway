@@ -14,7 +14,7 @@ curl http://localhost:4000/v1/chat/completions \
    }'
 ```
 
-Canonical request freezes request shape (method, path, payload, and headers). Token value is supplied from `TASK1_CANONICAL_AUTH_TOKEN`; endpoint ownership is validated separately.
+Canonical request freezes request shape (method, path, payload, and headers). The frozen shape originated from the `localhost:4000` request path; Task 1 validation runtime target is profile-driven via `$TASK1_BASE_URL`. Token value is supplied from `TASK1_CANONICAL_AUTH_TOKEN`.
 
 ## Security and Reproducibility Note
 
@@ -51,7 +51,8 @@ curl "$TASK1_BASE_URL/queue/status" \
 
 ## Environment Contract (Required Assumptions)
 
-- proxy listening on localhost:4000
+- Task 1 validation target is set by `$TASK1_BASE_URL` from the active validation profile.
+- Canonical request shape reference originated from `localhost:4000`, but runtime validation is profile-driven.
 - AUTOQ_ENABLED=true
 - Redis reachable by proxy
 - auth key valid for /v1/chat/completions and /queue/status
