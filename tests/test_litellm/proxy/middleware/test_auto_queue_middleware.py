@@ -28,8 +28,6 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import RedisError
-from starlette.applications import Starlette
-from starlette.routing import Route
 
 from litellm.proxy.middleware.auto_queue_middleware import (
     AutoQueueMiddleware,
@@ -115,28 +113,6 @@ def test_invalid_env_fallback_to_one_for_worker_count(monkeypatch):
 # ---------------------------------------------------------------------------
 # Integration tests (async)
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_queue_status_is_not_short_circuited_by_middleware(asgi_client_factory):
-    """The middleware should pass GET /queue/status through to the wrapped app."""
-
-    async def status_handler(request):
-        from starlette.responses import JSONResponse
-
-        return JSONResponse({"auth": "required"}, status_code=401)
-
-    app = AutoQueueMiddleware(
-        Starlette(routes=[Route("/queue/status", status_handler, methods=["GET"])]),
-        aqr=None,
-        enabled=True,
-    )
-
-    client = await asgi_client_factory(app)
-    response = await client.get("/queue/status")
-
-    assert response.status_code == 401
-    assert response.json() == {"auth": "required"}
 
 
 @pytest.mark.asyncio

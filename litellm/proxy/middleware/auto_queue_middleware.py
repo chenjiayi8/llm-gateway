@@ -366,7 +366,7 @@ async def build_auto_queue_status_response(
     try:
         models = await get_auto_queue_status_models(aqr, queue_map)
     except RedisError as exc:
-        raise AutoQueueStatusRedisError("queue-status") from exc
+        raise AutoQueueStatusRedisError("auto-queue") from exc
 
     for model in models:
         try:
