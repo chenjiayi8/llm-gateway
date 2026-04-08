@@ -13,13 +13,23 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — DONE_WITH_CONCERNS
 
 ## Current Work
-Task 6 operator checklist is now finalized with command checklist + release-gate rubric and fresh baseline/overflow rerun evidence. Canonical host caveat remains: `/queue/status` on `:4000` is still `404`, so queue-drain/status-under-load proof requires controlled runtime route exposure.
+Post-plan runtime-condition audit confirms auto-queue is not currently provably active on `:4000` (missing `/queue/status`, no `metadata.autoq`, runtime/source mismatch).
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Most Recent First)
+
+## 2026-04-08 16:37 — post-plan runtime condition audit (subagent)
+- Ran focused condition check for auto-queue usage readiness on `http://localhost:4000`.
+- Confirmed blockers:
+  - `/queue/status` is not exposed (`404`) for both admin and virtual keys.
+  - spend-log rows exist for overflow window but `metadata.autoq` is absent (`autoq_rows=0`).
+  - runtime image appears to lack wired auto-queue middleware/reconciler despite workspace source containing it.
+  - configured Redis target for auto-queue (`redis:6379`, db 3) is not reachable from runtime context.
+- Conclusion:
+  - auto-queue cannot currently be considered active/usable on `:4000` without runtime/image and Redis wiring corrections.
 
 ## 2026-04-08 14:16 — task 6 completion (operator checklist + rerun evidence)
 - Updated `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`:
