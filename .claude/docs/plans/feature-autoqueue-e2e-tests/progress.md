@@ -21,6 +21,13 @@ Task 6 concern-closure pass is complete; unresolved concern-closure items remain
 
 ## Timeline (Recent Entries)
 
+## 2026-04-08 17:42 — task 6 minor checklist-quality fix complete
+- Updated timeout checklist command in `autoqueue-e2e-scenarios.md` to remove explicit `--timeout-seconds 2` and use scenario default deterministic timeout budget.
+- Added an explicit timeout checklist note clarifying deterministic-default usage.
+
+## 2026-04-08 17:42 — task 6 minor checklist-quality fix start
+- Re-opened Task 6 for a narrow doc-only correction to align timeout checklist command with deterministic timeout-proof guidance.
+
 ## 2026-04-08 17:34 — task 6 concern-closure pass complete
 - Updated `.claude/docs/plans/feature-autoqueue-e2e-tests/autoqueue-e2e-scenarios.md`:
   - kept the final checklist command set and aligned operator notes with strict queue-drain semantics (`overflow`/`timeout` fail in strict mode when queue-drain proof is unavailable)

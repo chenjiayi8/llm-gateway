@@ -141,8 +141,7 @@ poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e
 
 # 5) Timeout run command
 poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/run_autoqueue_e2e.py \
-  --scenario timeout \
-  --timeout-seconds 2
+  --scenario timeout
 
 # 6) Spend-log evidence command
 poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/collect_spend_log_evidence.py \
@@ -151,6 +150,8 @@ poetry run python .claude/docs/plans/feature-autoqueue-e2e-tests/collect_spend_l
   --end-epoch <end_epoch_seconds> \
   --output-file /tmp/autoqueue_spend_evidence.json
 ```
+
+Timeout checklist note: run without `--timeout-seconds` to use the scenario default deterministic timeout budget.
 
 Strict-mode note:
 - `overflow`/`timeout` commands require queue-drain proof and return non-zero when `/queue/status` is unavailable/degraded.
