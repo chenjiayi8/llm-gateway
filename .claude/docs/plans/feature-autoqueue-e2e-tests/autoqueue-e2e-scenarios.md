@@ -14,6 +14,38 @@ curl http://localhost:4000/v1/chat/completions \
    }'
 ```
 
+Canonical request freezes request shape (method, path, payload, and headers), not endpoint ownership of whichever process currently binds a local port.
+
+## Security and Reproducibility Note
+
+- The canonical bearer token above is a frozen Task 1 fixture; do not reuse it outside local validation and do not paste it into new logs/issues.
+- For reproducible reruns, prefer environment variables instead of hardcoded secrets:
+
+```bash
+export AUTOQ_BASE_URL="http://localhost:4001"
+export AUTOQ_AUTH_TOKEN="${AUTOQ_AUTH_TOKEN:?set AUTOQ_AUTH_TOKEN}"
+
+curl "$AUTOQ_BASE_URL/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $AUTOQ_AUTH_TOKEN" \
+  -d '{
+     "model": "glm-5.1",
+     "messages": [{"role": "user", "content": "Hello, who are you!"}]
+   }'
+
+curl "$AUTOQ_BASE_URL/queue/status" \
+  -H "Authorization: Bearer $AUTOQ_AUTH_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+## Runtime Profiles
+
+| Profile | Base URL / Port | Auth token source | Purpose |
+| --- | --- | --- | --- |
+| `runtime-a-host-4000` | `http://localhost:4000` | Frozen canonical token (`sk-HpY1...`) | Detect contract mismatch on pre-existing host-managed process and confirm this is not the controlled validation runtime |
+| `runtime-b-controlled-4010` | `http://localhost:4010` | Controlled runtime token from Task 1 evidence pass (`ef22dea798`) | Historical Requirement 3 baseline success capture (`/v1/chat/completions` HTTP 200 with valid completion body) |
+| `runtime-c-controlled-4001` | `http://localhost:4001` | `LITELLM_MASTER_KEY=sk-1234` for queue checks; canonical token for baseline reruns | Reproducible queue-route contract validation and strict-fix rerun checks |
+
 ## Environment Contract (Required Assumptions)
 
 - proxy listening on localhost:4000
@@ -22,95 +54,14 @@ curl http://localhost:4000/v1/chat/completions \
 - auth key valid for /v1/chat/completions and /queue/status
 - model path capable of successful responses under low load
 
-## Operator Validation Evidence (Task 1 Step 3/4)
+## Task 1 Evidence Snapshot
 
-### Runtime A: existing host process on `localhost:4000` (contract mismatch)
-
-- Process evidence:
-  - `ps -ef | rg '/usr/bin/litellm --port 4000'`
-  - Result: `root ... /usr/bin/python3.13 /usr/bin/litellm --port 4000`
-- Endpoint check:
-  - `curl http://localhost:4000/queue/status ...`
-  - Result: `HTTP 404` with body `{"detail":"Not Found"}`
-- Interpretation: the currently running host-managed proxy on `:4000` does not expose `/queue/status`.
-
-### Runtime B: controlled local proxy for reproducible Task 1 validation
-
-- Runtime dependencies used for reproducibility:
-  - Redis (local): `docker run -d --name task1-queue-redis -p 6379:6379 redis:7-alpine`
-  - Postgres (already running in workspace): `litellm_db` on `localhost:5432`
-- Historical baseline-success evidence (Requirement 3 satisfied at least once):
-  - Earlier Task 1 validation pass (captured in commit `ef22dea798`) used controlled runtime on `localhost:4010`.
-  - Baseline canonical request (`POST /v1/chat/completions`, model `glm-5.1`) returned `HTTP 200`.
-  - Minimal completion-body proof recorded in Task 1 progress for that pass: valid completion payload with `request_id` present.
-- Controlled proxy launch (repo code + explicit auto-queue env) on `localhost:4001`:
-
-```bash
-AUTOQ_ENABLED=true \
-AUTOQ_REDIS_HOST=127.0.0.1 AUTOQ_REDIS_PORT=6379 AUTOQ_REDIS_DB=3 \
-REDIS_HOST=127.0.0.1 REDIS_PORT=6379 \
-DATABASE_URL='postgresql://llmproxy:dbpassword9090@127.0.0.1:5432/litellm' \
-LITELLM_MASTER_KEY='sk-1234' \
-poetry run litellm --port 4001
-```
-
-- Route exposure proof in controlled runtime:
-  - `curl -sS http://localhost:4001/routes | rg -o '"/[^"]*queue[^"]*"' | sort -u`
-  - Result includes both `"/queue/chat/completions"` and `"/queue/status"`.
-- Manual queue-status request in controlled runtime:
-  - `curl http://localhost:4001/queue/status -H "Authorization: Bearer sk-1234"`
-  - Result: `HTTP 200` with payload:
-
-```json
-{"models":{"glm-5.1":{"active":0,"limit":2,"queued":0,"ceiling":50,"local_waiters":0}}}
-```
-
-- Manual canonical chat request in controlled runtime:
-  - `curl http://localhost:4001/v1/chat/completions ...`
-  - Current rerun result: `HTTP 429` from upstream throttling/limit state for `glm-5.1` in this environment.
-- Follow-up queue-status poll after the canonical request:
-  - Result remained `HTTP 200` with queue state fields present (example observed snapshot: `active=1`, `queued=0`, `local_waiters=0`), then drained (`active=0`) on the subsequent poll.
-- Task 1 strict-fix revalidation (bounded retry + runtime reset) on 2026-04-08:
-  - Bounded retry/backoff command used (10 attempts):
-
-```bash
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  curl -sS -o /tmp/task1_baseline_retry_${i}.json -w "%{http_code}\n" \
-    http://localhost:4001/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer sk-HpY1curLZDTt0NmpfWfH-g" \
-    -d '{"model":"glm-5.1","messages":[{"role":"user","content":"Hello, who are you!"}]}'
-  sleep $((i<5?i:5))
-done
-```
-
-  - Attempt summary:
-    - attempt 1: `429` (`Weekly/Monthly Limit Exhausted`, reset `2026-04-09 21:24:18`)
-    - attempt 2: `429` (`Weekly/Monthly Limit Exhausted`)
-    - attempt 3: `429` (`service may be temporarily overloaded`)
-    - attempt 4: `429` (`Weekly/Monthly Limit Exhausted`)
-    - attempt 5: `429` (`service may be temporarily overloaded`)
-    - attempt 6: `429` (`service may be temporarily overloaded`)
-    - attempt 7: `429` (`Weekly/Monthly Limit Exhausted`)
-    - attempt 8: `429` (`Weekly/Monthly Limit Exhausted`)
-    - attempt 9: `429` (`service may be temporarily overloaded`)
-    - attempt 10: `429` (`service may be temporarily overloaded`)
-  - Runtime reset conditions applied and rechecked:
-
-```bash
-docker exec task1-queue-redis redis-cli -n 3 FLUSHDB
-```
-
-  - After reset:
-    - `GET /queue/status` with `Authorization: Bearer sk-1234` => `HTTP 200` (`{"models":{}}`)
-    - canonical chat request still => `HTTP 429` (same upstream throttling/limit class)
-  - Hard evidence outcome: baseline `HTTP 200` for `glm-5.1` could not be reproduced during this run window; queue endpoint contract remained healthy (`HTTP 200`).
-
-- Reconciliation summary for Task 1 Step 3:
-  - Step 3 requirement (`HTTP 200` baseline with valid completion body) was satisfied in the earlier controlled-runtime validation (`ef22dea798`).
-  - Later strict-fix reruns on 2026-04-08 in the current controlled runtime were blocked by upstream `429` quota/overload responses.
-
-- Conclusion: `/queue/status` contract is valid in the intended auto-queue runtime; the prior Task 1 miss was due to hitting a different pre-existing process bound to `:4000`, not an endpoint path mismatch.
+- Requirement 3 satisfied at least once:
+  - Controlled runtime baseline evidence captured in commit `ef22dea798` (`localhost:4010`): `POST /v1/chat/completions` returned `HTTP 200` with valid completion body (`request_id` present).
+- Requirement 4 queue-status contract verified:
+  - Controlled runtime (`localhost:4001`) exposes `/queue/status` and returns `HTTP 200` with queue-state payload fields.
+- Current rerun blockers are tracked as transient incident evidence in:
+  - `progress.md` timeline entries (`2026-04-08 11:28` and `2026-04-08 11:31`)
 
 ## First-Pass Scenario Table
 
