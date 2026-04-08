@@ -7,44 +7,47 @@ Task 1 freezes the request contract and environment assumptions before any harne
 ```bash
 curl http://localhost:4000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-HpY1curLZDTt0NmpfWfH-g" \
+  -H "Authorization: Bearer ${TASK1_CANONICAL_AUTH_TOKEN}" \
   -d '{
      "model": "glm-5.1",
      "messages": [{"role": "user", "content": "Hello, who are you!"}]
    }'
 ```
 
-Canonical request freezes request shape (method, path, payload, and headers), not endpoint ownership of whichever process currently binds a local port.
+Canonical request freezes request shape (method, path, payload, and headers). Token value is supplied from `TASK1_CANONICAL_AUTH_TOKEN`; endpoint ownership is validated separately.
 
 ## Security and Reproducibility Note
 
-- The canonical bearer token above is a frozen Task 1 fixture; do not reuse it outside local validation and do not paste it into new logs/issues.
-- For reproducible reruns, prefer environment variables instead of hardcoded secrets:
+- Never commit real bearer tokens into Task 1 docs or logs.
+- Use environment variables for all auth values.
+
+## Active Validation Profile (Single Source of Truth)
 
 ```bash
-export AUTOQ_BASE_URL="http://localhost:4001"
-export AUTOQ_AUTH_TOKEN="${AUTOQ_AUTH_TOKEN:?set AUTOQ_AUTH_TOKEN}"
+export TASK1_ACTIVE_VALIDATION_PROFILE="controlled-runtime-4001"
+export TASK1_BASE_URL="http://localhost:4001"
+export TASK1_AUTH_TOKEN="${TASK1_AUTH_TOKEN:?set TASK1_AUTH_TOKEN}"
+```
 
-curl "$AUTOQ_BASE_URL/v1/chat/completions" \
+| Active profile variable value | Base URL / Port | Auth token source | Purpose |
+| --- | --- | --- | --- |
+| `controlled-runtime-4001` | `http://localhost:4001` | `TASK1_AUTH_TOKEN` | Active runtime for reproducible Task 1 queue-status validation and baseline reruns |
+
+All validation commands below derive from the active profile variables above.
+
+```bash
+curl "$TASK1_BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $AUTOQ_AUTH_TOKEN" \
+  -H "Authorization: Bearer $TASK1_AUTH_TOKEN" \
   -d '{
      "model": "glm-5.1",
      "messages": [{"role": "user", "content": "Hello, who are you!"}]
    }'
 
-curl "$AUTOQ_BASE_URL/queue/status" \
-  -H "Authorization: Bearer $AUTOQ_AUTH_TOKEN" \
+curl "$TASK1_BASE_URL/queue/status" \
+  -H "Authorization: Bearer $TASK1_AUTH_TOKEN" \
   -H "Content-Type: application/json"
 ```
-
-## Runtime Profiles
-
-| Profile | Base URL / Port | Auth token source | Purpose |
-| --- | --- | --- | --- |
-| `runtime-a-host-4000` | `http://localhost:4000` | Frozen canonical token (`sk-HpY1...`) | Detect contract mismatch on pre-existing host-managed process and confirm this is not the controlled validation runtime |
-| `runtime-b-controlled-4010` | `http://localhost:4010` | Controlled runtime token from Task 1 evidence pass (`ef22dea798`) | Historical Requirement 3 baseline success capture (`/v1/chat/completions` HTTP 200 with valid completion body) |
-| `runtime-c-controlled-4001` | `http://localhost:4001` | `LITELLM_MASTER_KEY=sk-1234` for queue checks; canonical token for baseline reruns | Reproducible queue-route contract validation and strict-fix rerun checks |
 
 ## Environment Contract (Required Assumptions)
 
@@ -54,14 +57,11 @@ curl "$AUTOQ_BASE_URL/queue/status" \
 - auth key valid for /v1/chat/completions and /queue/status
 - model path capable of successful responses under low load
 
-## Task 1 Evidence Snapshot
+## Task 1 Evidence References (Brief)
 
-- Requirement 3 satisfied at least once:
-  - Controlled runtime baseline evidence captured in commit `ef22dea798` (`localhost:4010`): `POST /v1/chat/completions` returned `HTTP 200` with valid completion body (`request_id` present).
-- Requirement 4 queue-status contract verified:
-  - Controlled runtime (`localhost:4001`) exposes `/queue/status` and returns `HTTP 200` with queue-state payload fields.
-- Current rerun blockers are tracked as transient incident evidence in:
-  - `progress.md` timeline entries (`2026-04-08 11:28` and `2026-04-08 11:31`)
+- Requirement 3 baseline success evidence reference: commit `ef22dea798` (`HTTP 200` with valid completion body).
+- Requirement 4 queue-status contract evidence reference: progress timeline entry `2026-04-08 11:08`.
+- Current rerun blocker evidence reference: progress timeline entries `2026-04-08 11:28` and `2026-04-08 11:31`.
 
 ## First-Pass Scenario Table
 
