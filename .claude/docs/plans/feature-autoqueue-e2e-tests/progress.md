@@ -13,7 +13,7 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 2 baseline and burst evidence now use real non-mock traffic on canonical runtime with `model=glm-5` (user-validated working command).
+Task 2 baseline and burst evidence now use real non-mock traffic on runtime-compat profile (`model=glm-5`) while Task 1 canonical request contract remains `glm-5.1`.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
@@ -103,10 +103,10 @@ Task 2 baseline and burst evidence now use real non-mock traffic on canonical ru
   - Task 2 promoted to `DONE`.
 
 ## 2026-04-08 18:34 — task 2 real-runtime reconciliation (non-mock)
-- User-provided canonical-runtime command validated as working with `model=glm-5`:
+- User-provided runtime-compat command validated as working with `model=glm-5`:
   - `POST http://localhost:4000/v1/chat/completions` returned `HTTP 200` with valid completion body.
 - Removed prior `mock_response`-based workaround from `run_autoqueue_e2e.py` so runner evidence is real traffic only.
-- Real runner evidence with canonical runtime and user-provided token:
+- Real runner evidence with runtime-compat profile and user-provided token:
   - baseline:
     - `TASK1_BASE_URL=http://localhost:4000 TASK1_AUTH_TOKEN=<env> TASK2_MODEL=glm-5 poetry run python ... --scenario baseline`
     - summary: `status_counts={"200":1,"503":0,"504":0}`, `other_status_counts={}`, `success_200=1`
@@ -116,6 +116,7 @@ Task 2 baseline and burst evidence now use real non-mock traffic on canonical ru
     - summary: `status_counts={"200":2,"503":0,"504":0}`, `other_status_counts={"429":8}`, `success_200=2`
 - Outcome:
   - Task 2 requirement-4 baseline success is now satisfied without mock payload fields.
+  - Canonical Task 1 contract remains `glm-5.1`; this run documents a validated runtime override needed in current environment.
   - Task 2 remains `DONE`.
 
 ## 2026-04-07 00:00 — session start

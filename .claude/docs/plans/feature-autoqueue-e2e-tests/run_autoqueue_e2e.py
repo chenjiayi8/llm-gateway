@@ -22,7 +22,7 @@ SCENARIOS = {
 
 
 def build_payload(model: str) -> dict[str, Any]:
-    # Keep canonical payload shape unchanged.
+    # Keep canonical chat-completions shape unchanged; model value is runtime-selectable.
     return {
         "model": model,
         "messages": [{"role": "user", "content": "Hello, who are you!"}],
