@@ -13,7 +13,7 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 1 fix pass complete: `/queue/status` now has reproducible `HTTP 200` evidence with model queue-state fields in controlled local runtime; canonical request currently returns `429` in this environment.
+Task 1 strict-fix revalidation complete: `/queue/status` remains reproducibly `HTTP 200` in controlled local runtime, but baseline canonical request for `glm-5.1` is still `429` after bounded retries/backoff and one runtime-state reset.
 
 ## 2026-04-08 10:44 — task 1 execution start
 - Resumed Task 1 in active implementation session.
@@ -52,6 +52,28 @@ Task 1 fix pass complete: `/queue/status` now has reproducible `HTTP 200` eviden
 ## 2026-04-08 11:12 — task 1 fix pass complete
 - Spec-review gap for Step 4 addressed with concrete `/queue/status` success evidence (`HTTP 200` + `models.glm-5.1` queue fields).
 - Task 1 kept scoped to documentation/progress artifacts only; no Task 2+ implementation performed.
+
+## 2026-04-08 11:28 — task 1 strict-fix baseline rerun (hard blocker evidence)
+- Recreated controlled Task 1 runtime on `localhost:4001` with:
+  - `AUTOQ_ENABLED=true`
+  - `AUTOQ_REDIS_HOST=127.0.0.1`, `AUTOQ_REDIS_PORT=6379`, `AUTOQ_REDIS_DB=3`
+  - `REDIS_HOST=127.0.0.1`, `REDIS_PORT=6379`
+  - `DATABASE_URL=postgresql://llmproxy:dbpassword9090@127.0.0.1:5432/litellm`
+  - `LITELLM_MASTER_KEY=sk-1234`
+- Queue endpoint health in controlled runtime:
+  - `curl http://localhost:4001/queue/status -H "Authorization: Bearer sk-1234"` -> `HTTP 200` with payload `{"models":{}}`.
+- Baseline canonical request rerun with bounded retries/backoff (10 attempts):
+  - Command path: `POST /v1/chat/completions` with model `glm-5.1` and payload `{"messages":[{"role":"user","content":"Hello, who are you!"}]}`
+  - Attempt result mix: `10/10` returned `HTTP 429`
+  - Error classes observed:
+    - `Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-04-09 21:24:18`
+    - `The service may be temporarily overloaded, please try again later`
+- Runtime reset attempt before final retry:
+  - `docker exec task1-queue-redis redis-cli -n 3 FLUSHDB` -> `OK`
+  - Post-reset canonical chat request still returned `HTTP 429`.
+- Outcome:
+  - Could not obtain Task 1 baseline `HTTP 200` evidence for `glm-5.1` in this validation window.
+  - Task 1 remains `DONE_WITH_CONCERNS` pending provider/quota recovery or alternate non-throttled upstream credentials for `glm-5.1`.
 
 ## 2026-04-08 11:12 — local validation teardown
 - Stopped controlled local proxy runtime (`:4001`) after evidence capture.
