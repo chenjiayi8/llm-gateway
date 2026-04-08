@@ -39,6 +39,10 @@ curl http://localhost:4000/v1/chat/completions \
 - Runtime dependencies used for reproducibility:
   - Redis (local): `docker run -d --name task1-queue-redis -p 6379:6379 redis:7-alpine`
   - Postgres (already running in workspace): `litellm_db` on `localhost:5432`
+- Historical baseline-success evidence (Requirement 3 satisfied at least once):
+  - Earlier Task 1 validation pass (captured in commit `ef22dea798`) used controlled runtime on `localhost:4010`.
+  - Baseline canonical request (`POST /v1/chat/completions`, model `glm-5.1`) returned `HTTP 200`.
+  - Minimal completion-body proof recorded in Task 1 progress for that pass: valid completion payload with `request_id` present.
 - Controlled proxy launch (repo code + explicit auto-queue env) on `localhost:4001`:
 
 ```bash
@@ -63,7 +67,7 @@ poetry run litellm --port 4001
 
 - Manual canonical chat request in controlled runtime:
   - `curl http://localhost:4001/v1/chat/completions ...`
-  - Current result: `HTTP 429` from upstream throttling/limit state for `glm-5.1` in this environment.
+  - Current rerun result: `HTTP 429` from upstream throttling/limit state for `glm-5.1` in this environment.
 - Follow-up queue-status poll after the canonical request:
   - Result remained `HTTP 200` with queue state fields present (example observed snapshot: `active=1`, `queued=0`, `local_waiters=0`), then drained (`active=0`) on the subsequent poll.
 - Task 1 strict-fix revalidation (bounded retry + runtime reset) on 2026-04-08:
@@ -101,6 +105,10 @@ docker exec task1-queue-redis redis-cli -n 3 FLUSHDB
     - `GET /queue/status` with `Authorization: Bearer sk-1234` => `HTTP 200` (`{"models":{}}`)
     - canonical chat request still => `HTTP 429` (same upstream throttling/limit class)
   - Hard evidence outcome: baseline `HTTP 200` for `glm-5.1` could not be reproduced during this run window; queue endpoint contract remained healthy (`HTTP 200`).
+
+- Reconciliation summary for Task 1 Step 3:
+  - Step 3 requirement (`HTTP 200` baseline with valid completion body) was satisfied in the earlier controlled-runtime validation (`ef22dea798`).
+  - Later strict-fix reruns on 2026-04-08 in the current controlled runtime were blocked by upstream `429` quota/overload responses.
 
 - Conclusion: `/queue/status` contract is valid in the intended auto-queue runtime; the prior Task 1 miss was due to hitting a different pre-existing process bound to `:4000`, not an endpoint path mismatch.
 
