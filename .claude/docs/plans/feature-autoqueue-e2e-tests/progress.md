@@ -13,13 +13,31 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 5 completed with deterministic CI-safe regression tests added; adjacent middleware/reconciler suites currently show pre-existing `fakeredis` Lua-script compatibility failures (`unknown command 'evalsha'`) in this environment.
+Task 5 quality/spec fix pass completed at `HEAD be44b5e10d9d`; deterministic regression file passes with strict `-v` command evidence, while adjacent middleware/reconciler suites still show pre-existing `fakeredis` Lua-script compatibility failures (`unknown command 'evalsha'`) in this environment.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 19:06 — task 5 quality/spec fix pass at `be44b5e10d9d`
+- Applied review-driven fixes in `tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py`:
+  - removed private coupling to `_get_spend_logs_metadata`; metadata is now validated via public `get_logging_payload(...)` contract path
+  - converted bounded-overload scenario to pressure-driven async behavior (coordinated active request + concurrent overload requests)
+  - tightened queue-status auth assertion to deterministic `401`
+  - removed now-unused private-helper import from test logic
+- Strict required command evidence (current):
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_e2e_plan.py -v`
+  - result: `3 passed`
+- Adjacent verification rerun:
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_middleware.py -q` -> `8 failed, 11 passed, 1 xpassed`
+  - `poetry run pytest tests/test_litellm/proxy/middleware/test_auto_queue_reconciler.py -q` -> `3 failed, 2 passed` (`fakeredis` `unknown command 'evalsha'`)
+  - `poetry run pytest tests/test_litellm/proxy/spend_tracking/test_spend_management_endpoints.py -q` -> `55 passed`
+- Historical note correction:
+  - earlier Task 5 stub-first evidence used `-q` during initial implementation phase; strict quality/spec pass evidence now uses the required `-v` command form.
+- Concern:
+  - adjacent non-scope failures remain consistent with prior environment-level Redis/fakeredis incompatibility and are not introduced by this Task 5 scoped test-file change.
 
 ## 2026-04-08 13:45 — task 5 completion (deterministic CI-safe regression subset)
 - Added new deterministic regression file:

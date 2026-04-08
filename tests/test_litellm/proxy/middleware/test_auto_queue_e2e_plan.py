@@ -1,6 +1,8 @@
 import asyncio
+import json
 import os
 import sys
+from datetime import datetime, timezone
 
 import pytest
 
@@ -85,6 +87,9 @@ async def _run_bounded_overload_scenario(
     from litellm.proxy.middleware.auto_queue_scripts import AdmitDecision, ReleaseTransfer
     from litellm.proxy.middleware.auto_queue_state import AutoQueueRequestState
 
+    allow_active_request_to_finish = asyncio.Event()
+    active_request_started = asyncio.Event()
+
     class FakeAQR:
         def __init__(self):
             self.calls = 0
@@ -134,29 +139,41 @@ async def _run_bounded_overload_scenario(
 
     async def slow_handler(request):
         await request.body()
+        active_request_started.set()
+        await allow_active_request_to_finish.wait()
         return JSONResponse({"ok": True})
 
     app = make_middleware_app(slow_handler, aqr=aqr, enabled=True, max_queue_depth=1)
     client = await asgi_client_factory(app)
 
-    first_response = await client.post(
-        "/v1/chat/completions",
-        json={"model": "gpt-4", "messages": []},
+    admitted_task = asyncio.create_task(
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": []},
+        )
     )
-    second_response = await client.post(
-        "/v1/chat/completions",
-        json={"model": "gpt-4", "messages": []},
-    )
-    overflow_response = await client.post(
-        "/v1/chat/completions",
-        json={"model": "gpt-4", "messages": []},
-    )
+    await active_request_started.wait()
 
-    return [
-        first_response.status_code,
-        second_response.status_code,
-        overflow_response.status_code,
-    ]
+    overloaded_responses = await asyncio.gather(
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": []},
+        ),
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": []},
+        ),
+    )
+    allow_active_request_to_finish.set()
+    admitted_response = await admitted_task
+
+    return {
+        "admitted_status": admitted_response.status_code,
+        "overloaded_statuses": [
+            overloaded_responses[0].status_code,
+            overloaded_responses[1].status_code,
+        ],
+    }
 
 
 async def _capture_spend_log_autoq_metadata(
@@ -168,7 +185,7 @@ async def _capture_spend_log_autoq_metadata(
 
     from litellm.proxy.middleware.auto_queue_scripts import AdmitDecision, ReleaseTransfer
     from litellm.proxy.middleware.auto_queue_state import AutoQueueRequestState
-    from litellm.proxy.spend_tracking.spend_tracking_utils import _get_spend_logs_metadata
+    from litellm.proxy.spend_tracking.spend_tracking_utils import get_logging_payload
 
     class FakeAQR:
         async def admit_or_enqueue(self, model, request_id, priority, deadline_at_ms, worker_id):
@@ -217,16 +234,36 @@ async def _capture_spend_log_autoq_metadata(
     assert response.status_code == 200
     assert isinstance(captured_autoq_metadata, dict)
 
-    return _get_spend_logs_metadata(
-        metadata={"status": "success"},
-        request_data={
-            "proxy_server_request": {
-                "body": {
-                    "autoq_metadata": captured_autoq_metadata,
-                }
-            }
+    payload = get_logging_payload(
+        kwargs={
+            "model": "gpt-4",
+            "call_type": "acompletion",
+            "litellm_params": {
+                "metadata": {
+                    "status": "success",
+                    "user_api_key": "sk-test",
+                },
+                "proxy_server_request": {
+                    "body": {
+                        "autoq_metadata": captured_autoq_metadata,
+                    }
+                },
+            },
         },
+        response_obj={
+            "id": "chatcmpl-test-autoq",
+            "usage": {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+            },
+        },
+        start_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
+    payload_metadata = json.loads(payload["metadata"])
+
+    return payload_metadata["autoq"]
 
 
 def test_auto_queue_status_endpoint_requires_auth_and_returns_models(monkeypatch):
@@ -234,7 +271,7 @@ def test_auto_queue_status_endpoint_requires_auth_and_returns_models(monkeypatch
     unauthorized_response = harness["unauthorized_response"]
     authorized_response = harness["authorized_response"]
 
-    assert unauthorized_response.status_code in {401, 403}
+    assert unauthorized_response.status_code == 401
     assert authorized_response.status_code == 200
     assert authorized_response.json() == {
         "models": {
@@ -254,12 +291,13 @@ async def test_auto_queue_bounded_overload_returns_expected_status_mix(
     make_middleware_app,
     asgi_client_factory,
 ):
-    status_codes = await _run_bounded_overload_scenario(
+    status_summary = await _run_bounded_overload_scenario(
         make_middleware_app=make_middleware_app,
         asgi_client_factory=asgi_client_factory,
     )
 
-    assert sorted(status_codes) == [200, 503, 503]
+    assert status_summary["admitted_status"] == 200
+    assert status_summary["overloaded_statuses"] == [503, 503]
 
 
 @pytest.mark.asyncio
@@ -267,12 +305,11 @@ async def test_auto_queue_metadata_is_preserved_in_spend_logs(
     make_middleware_app,
     asgi_client_factory,
 ):
-    spend_metadata = await _capture_spend_log_autoq_metadata(
+    autoq = await _capture_spend_log_autoq_metadata(
         make_middleware_app=make_middleware_app,
         asgi_client_factory=asgi_client_factory,
     )
 
-    autoq = spend_metadata["autoq"]
     assert isinstance(autoq, dict)
     assert autoq["summary"]["model"] == "gpt-4"
     assert autoq["summary"]["decision"] == "admit_now"
