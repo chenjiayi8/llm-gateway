@@ -5,7 +5,7 @@ Started: 2026-04-07
 Last updated: 2026-04-08
 
 ## Status Summary
-- Task 1: Freeze canonical request and environment contract — DONE_WITH_CONCERNS
+- Task 1: Freeze canonical request and environment contract — DONE_WITH_CONCERNS (Requirement 3 was satisfied once; current reruns are blocked by upstream `429`)
 - Task 2: Build local load runner around canonical request — NOT STARTED
 - Task 3: Add queue-status and spend-log evidence collectors — NOT STARTED
 - Task 4: Add overload and timeout scenarios for local proof — NOT STARTED
@@ -13,7 +13,7 @@ Last updated: 2026-04-08
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 1 strict-fix revalidation complete: `/queue/status` remains reproducibly `HTTP 200` in controlled local runtime, but baseline canonical request for `glm-5.1` is still `429` after bounded retries/backoff and one runtime-state reset.
+Task 1 reconciliation: earlier controlled-runtime evidence already captured one successful baseline (`HTTP 200` + valid completion body with `request_id` present, commit `ef22dea798`), while current strict-fix reruns remain blocked by upstream `429` quota/overload despite bounded retries/reset.
 
 ## 2026-04-08 10:44 — task 1 execution start
 - Resumed Task 1 in active implementation session.
@@ -53,6 +53,10 @@ Task 1 strict-fix revalidation complete: `/queue/status` remains reproducibly `H
 - Spec-review gap for Step 4 addressed with concrete `/queue/status` success evidence (`HTTP 200` + `models.glm-5.1` queue fields).
 - Task 1 kept scoped to documentation/progress artifacts only; no Task 2+ implementation performed.
 
+## 2026-04-08 11:12 — local validation teardown
+- Stopped controlled local proxy runtime (`:4001`) after evidence capture.
+- Removed temporary Redis container used for this validation pass (`task1-queue-redis`).
+
 ## 2026-04-08 11:28 — task 1 strict-fix baseline rerun (hard blocker evidence)
 - Recreated controlled Task 1 runtime on `localhost:4001` with:
   - `AUTOQ_ENABLED=true`
@@ -75,9 +79,13 @@ Task 1 strict-fix revalidation complete: `/queue/status` remains reproducibly `H
   - Could not obtain Task 1 baseline `HTTP 200` evidence for `glm-5.1` in this validation window.
   - Task 1 remains `DONE_WITH_CONCERNS` pending provider/quota recovery or alternate non-throttled upstream credentials for `glm-5.1`.
 
-## 2026-04-08 11:12 — local validation teardown
-- Stopped controlled local proxy runtime (`:4001`) after evidence capture.
-- Removed temporary Redis container used for this validation pass (`task1-queue-redis`).
+## 2026-04-08 11:31 — final task 1 reconciliation pass
+- Reconciled Task 1 chronology using existing evidence from commit `ef22dea798`:
+  - Requirement 3 (`/v1/chat/completions` baseline success) was satisfied at least once in prior controlled runtime validation (`localhost:4010`).
+  - Captured minimal body proof from that prior pass: valid completion payload with `request_id` present.
+- Reconciled with current strict-fix rerun evidence:
+  - Current controlled runtime reruns (`localhost:4001`, 2026-04-08 11:28 CEST) are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and `service temporarily overloaded`) across bounded retry/backoff attempts.
+  - Queue endpoint contract remains healthy in reruns (`GET /queue/status` returns `HTTP 200`).
 
 ## 2026-04-07 00:00 — session start
 - Created feature-branch planning directory for empowered superpowers work.
