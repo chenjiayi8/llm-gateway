@@ -66,6 +66,41 @@ poetry run litellm --port 4001
   - Current result: `HTTP 429` from upstream throttling/limit state for `glm-5.1` in this environment.
 - Follow-up queue-status poll after the canonical request:
   - Result remained `HTTP 200` with queue state fields present (example observed snapshot: `active=1`, `queued=0`, `local_waiters=0`), then drained (`active=0`) on the subsequent poll.
+- Task 1 strict-fix revalidation (bounded retry + runtime reset) on 2026-04-08:
+  - Bounded retry/backoff command used (10 attempts):
+
+```bash
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  curl -sS -o /tmp/task1_baseline_retry_${i}.json -w "%{http_code}\n" \
+    http://localhost:4001/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-HpY1curLZDTt0NmpfWfH-g" \
+    -d '{"model":"glm-5.1","messages":[{"role":"user","content":"Hello, who are you!"}]}'
+  sleep $((i<5?i:5))
+done
+```
+
+  - Attempt summary:
+    - attempt 1: `429` (`Weekly/Monthly Limit Exhausted`, reset `2026-04-09 21:24:18`)
+    - attempt 2: `429` (`Weekly/Monthly Limit Exhausted`)
+    - attempt 3: `429` (`service may be temporarily overloaded`)
+    - attempt 4: `429` (`Weekly/Monthly Limit Exhausted`)
+    - attempt 5: `429` (`service may be temporarily overloaded`)
+    - attempt 6: `429` (`service may be temporarily overloaded`)
+    - attempt 7: `429` (`Weekly/Monthly Limit Exhausted`)
+    - attempt 8: `429` (`Weekly/Monthly Limit Exhausted`)
+    - attempt 9: `429` (`service may be temporarily overloaded`)
+    - attempt 10: `429` (`service may be temporarily overloaded`)
+  - Runtime reset conditions applied and rechecked:
+
+```bash
+docker exec task1-queue-redis redis-cli -n 3 FLUSHDB
+```
+
+  - After reset:
+    - `GET /queue/status` with `Authorization: Bearer sk-1234` => `HTTP 200` (`{"models":{}}`)
+    - canonical chat request still => `HTTP 429` (same upstream throttling/limit class)
+  - Hard evidence outcome: baseline `HTTP 200` for `glm-5.1` could not be reproduced during this run window; queue endpoint contract remained healthy (`HTTP 200`).
 
 - Conclusion: `/queue/status` contract is valid in the intended auto-queue runtime; the prior Task 1 miss was due to hitting a different pre-existing process bound to `:4000`, not an endpoint path mismatch.
 
