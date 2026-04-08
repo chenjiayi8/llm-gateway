@@ -7,19 +7,67 @@ Last updated: 2026-04-08
 ## Status Summary
 - Task 1: Freeze canonical request and environment contract — DONE
 - Task 2: Build local load runner around canonical request — DONE
-- Task 3: Add queue-status and spend-log evidence collectors — NOT STARTED
+- Task 3: Add queue-status and spend-log evidence collectors — DONE_WITH_CONCERNS
 - Task 4: Add overload and timeout scenarios for local proof — NOT STARTED
 - Task 5: Codify deterministic CI-safe regression subset — NOT STARTED
 - Task 6: Produce final operator checklist — NOT STARTED
 
 ## Current Work
-Task 2 baseline and burst evidence now use real non-mock traffic on runtime-compat profile (`model=glm-5`) while Task 1 canonical request contract remains `glm-5.1`.
+Task 3 completed with stub-first verification and combined burst evidence (`during` snapshots, post-run idle, and spend-log `metadata.autoq`) on controlled runtime `http://localhost:4001`; canonical `localhost:4000` still serves `/queue/status` as `404` in this environment.
 
 ## Historical vs Current Task 1 State
 - Historical success evidence (Requirement 3): commit `ef22dea798` captured controlled-runtime baseline `POST /v1/chat/completions` success (`HTTP 200`) with valid completion body (`request_id` present).
 - Current rerun state: strict-fix reruns on `2026-04-08` are blocked by upstream `429` (`Weekly/Monthly Limit Exhausted` and transient overload), while `/queue/status` remains `HTTP 200` in controlled runtime.
 
 ## Timeline (Chronological)
+
+## 2026-04-08 13:02 — task 3 completion (combined burst evidence)
+- Final combined run used controlled runtime profile (`http://localhost:4001`, `model=glm-5`) with:
+  - queue poller (`before=1`, `during=80s`, `after=30`, `interval=1s`)
+  - load runner scenario `burst-10`
+  - spend evidence collector window `[start_epoch, end_epoch]`
+- Final evidence summary:
+  - `BURST_EXIT=0`, `POLL_EXIT=0`, `SPEND_EXIT=0`
+  - queue snapshots: `during_snapshot_count=80`, `post_run_idle_observed=true`, `http_status_counts={"200":111}`
+  - spend evidence: `rows_filtered=6`, `autoq_rows=6`
+  - spend output included explicit `autoq_metadata` rows showing queued and admitted events.
+- Artifact files:
+  - `/tmp/task3_queue_snapshots_run2.json`
+  - `/tmp/task3_spend_evidence_run2.json`
+  - `/tmp/task3_burst_run2.log`
+  - `/tmp/task3_poll_run2.log`
+  - `/tmp/task3_spend_run2.log`
+
+## 2026-04-08 12:58 — task 3 fix pass after first combined attempt
+- First combined attempt surfaced two issues:
+  - poller ended its `after` window before load fully drained (`post_run_idle_observed=false`)
+  - spend collector was over-filtering model rows (`rows_filtered=0`) due strict model matching and server-side `model=` filtering.
+- Remediation:
+  - updated `collect_spend_log_evidence.py` to fetch spend rows by time window and apply robust local model matching (`model`, `model_group`, `model_id`) with compatible variants (e.g., provider-prefixed model names).
+  - reran combined scenario with longer polling window so `after` snapshots occur post-load.
+
+## 2026-04-08 12:47 — task 3 step 3/4 implementation
+- Implemented `.claude/docs/plans/feature-autoqueue-e2e-tests/poll_queue_status.py`:
+  - authenticated `GET /queue/status`
+  - captures before/during/after snapshots
+  - extracts target model row when present
+  - writes JSON evidence and supports strict checks for during snapshot + post-run idle.
+- Implemented `.claude/docs/plans/feature-autoqueue-e2e-tests/collect_spend_log_evidence.py`:
+  - fetches paginated `/spend/logs/v2` rows for a time window
+  - filters by target model and extracts `metadata.autoq`
+  - prints `autoq_metadata` rows
+  - fails clearly when queued behavior is expected but no matching rows are present.
+
+## 2026-04-08 12:45 — task 3 step 1/2 stub-first proof
+- Replaced both new collectors with explicit TODO `NotImplementedError` stubs.
+- Stub execution evidence:
+  - `poetry run python .../poll_queue_status.py --model glm-5` -> `NotImplementedError` / `EXIT_CODE=1`
+  - `poetry run python .../collect_spend_log_evidence.py --model glm-5 --start-epoch 1` -> `NotImplementedError` / `EXIT_CODE=1`
+- Proceeded to implementation only after capturing expected non-zero TODO failures.
+
+## 2026-04-08 12:19 — task 3 execution start
+- Read current progress state and began Task 3 implementation.
+- Marked Task 2 `DONE` and Task 3 `IN PROGRESS` per Task 3 handoff requirements.
 
 ## 2026-04-08 12:01 — task 2 execution start
 - Marked Task 1 `DONE` and Task 2 `IN PROGRESS` per Task 2 handoff requirements.
