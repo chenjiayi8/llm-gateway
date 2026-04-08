@@ -23,10 +23,15 @@ SCENARIOS = {
 
 def build_payload() -> dict[str, Any]:
     # Keep canonical payload shape unchanged.
-    return {
+    payload: dict[str, Any] = {
         "model": "glm-5.1",
         "messages": [{"role": "user", "content": "Hello, who are you!"}],
     }
+    mock_response = os.getenv("TASK2_MOCK_RESPONSE")
+    if mock_response:
+        # Optional deterministic local test path; default payload remains canonical.
+        payload["mock_response"] = mock_response
+    return payload
 
 
 def parse_args() -> argparse.Namespace:
