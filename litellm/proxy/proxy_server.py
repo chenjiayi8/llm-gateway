@@ -614,6 +614,8 @@ from fastapi.security import OAuth2PasswordBearer
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
+from litellm_proxy_extras.metrics import install_metrics as install_proxy_metrics
+
 from litellm.types.agents import AgentConfig
 
 # import enterprise folder
@@ -1513,6 +1515,8 @@ if AUTOQ_ENABLED:
     # Added after auth/metrics middleware so queuing only applies to authenticated requests.
     # Starlette wraps in reverse order, so AutoQueueMiddleware runs after auth.
     app.add_middleware(AutoQueueMiddleware)
+
+install_proxy_metrics(app)
 
 
 def mount_swagger_ui():
