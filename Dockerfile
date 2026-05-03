@@ -36,6 +36,9 @@ RUN pip install dist/*.whl
 # install dependencies as wheels
 RUN pip wheel --no-cache-dir --wheel-dir=/wheels/ -r requirements.txt
 
+# Build local litellm-proxy-extras and overwrite the published wheel from requirements
+RUN cd /app/litellm-proxy-extras && rm -rf dist && python -m build && cp dist/*.whl /wheels/
+
 # ensure pyjwt is used, not jwt
 RUN pip uninstall jwt -y
 RUN pip uninstall PyJWT -y
