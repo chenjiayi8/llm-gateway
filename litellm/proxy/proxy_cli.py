@@ -845,6 +845,8 @@ def run_server(  # noqa: PLR0915
             try:
                 from litellm.secret_managers.main import get_secret
 
+                resolved_active_db_url = None
+
                 if os.getenv("DATABASE_URL", None) is not None:
                     ### add connection pool + pool timeout args
                     params = {
@@ -856,6 +858,7 @@ def run_server(  # noqa: PLR0915
                         str(database_url) if database_url else None, params
                     )
                     os.environ["DATABASE_URL"] = modified_url
+                    resolved_active_db_url = modified_url
                 if os.getenv("DIRECT_URL", None) is not None:
                     ### add connection pool + pool timeout args
                     params = {
@@ -865,6 +868,8 @@ def run_server(  # noqa: PLR0915
                     database_url = os.getenv("DIRECT_URL")
                     modified_url = append_query_params(database_url, params)
                     os.environ["DIRECT_URL"] = modified_url
+                    if resolved_active_db_url is None:
+                        resolved_active_db_url = modified_url
                     ###
                 subprocess.run(["prisma"], capture_output=True)
                 is_prisma_runnable = True
@@ -872,11 +877,11 @@ def run_server(  # noqa: PLR0915
                 is_prisma_runnable = False
 
             if is_prisma_runnable:
-                from litellm.proxy.db.check_migration import check_prisma_schema_diff
-                from litellm.proxy.db.prisma_client import (
-                    PrismaManager,
-                    should_update_prisma_schema,
+                from litellm.proxy.db.check_migration import (
+                    check_prisma_schema_diff,
+                    check_prisma_schema_diff_helper,
                 )
+                from litellm.proxy.db.prisma_client import should_update_prisma_schema
 
                 if (
                     should_update_prisma_schema(
@@ -885,21 +890,27 @@ def run_server(  # noqa: PLR0915
                     is False
                 ):
                     check_prisma_schema_diff(db_url=None)
-                else:
-                    if not PrismaManager.setup_database(
-                        use_migrate=not use_prisma_db_push
-                    ):
+                elif resolved_active_db_url is not None:
+                    has_diff, sql_commands = check_prisma_schema_diff_helper(
+                        resolved_active_db_url
+                    )
+                    if has_diff:
+                        migration_hint = (
+                            "prisma db push"
+                            if use_prisma_db_push
+                            else "prisma migrate deploy"
+                        )
+                        message = (
+                            "LiteLLM Proxy: Prisma schema is out of sync with the database. "
+                            f"Apply the required changes via the schema authority workflow ({migration_hint}) before relying on this instance."
+                        )
                         if enforce_prisma_migration_check:
-                            print(  # noqa
-                                "\033[1;31mLiteLLM Proxy: Database setup failed after multiple retries. "
-                                "The proxy cannot start safely. Please check your database connection and migration status.\033[0m"
-                            )
+                            print(f"\033[1;31m{message}\033[0m")  # noqa: T201
+                            for command in sql_commands:
+                                print(command)  # noqa: T201
                             sys.exit(1)
                         else:
-                            print(  # noqa
-                                "\033[1;33mLiteLLM Proxy: Database migration failed but continuing startup. "
-                                "Set --enforce_prisma_migration_check or ENFORCE_PRISMA_MIGRATION_CHECK=true to exit on failure.\033[0m"
-                            )
+                            print(f"\033[1;33m{message}\033[0m")  # noqa: T201
             else:
                 print(  # noqa
                     f"Unable to connect to DB. DATABASE_URL found in environment, but prisma package not found."  # noqa

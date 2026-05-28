@@ -4,16 +4,21 @@ from unittest.mock import MagicMock, patch
 
 import fastapi
 import pytest
+from click.testing import CliRunner
 
 sys.path.insert(
     0, os.path.abspath("../../..")
 )  # Adds the parent directory to the system-path
 
-import builtins
-import types
-
 from litellm.proxy.health_endpoints.health_app_factory import build_health_app
 from litellm.proxy.proxy_cli import ProxyInitializationHelpers
+
+
+def _invoke_run_server(args: list[str]):
+    from litellm.proxy.proxy_cli import run_server
+
+    runner = CliRunner()
+    return runner.invoke(run_server, args)
 
 
 @pytest.mark.xdist_group("proxy_cli")
@@ -227,9 +232,10 @@ class TestProxyInitializationHelpers:
 
     @patch("uvicorn.run")
     @patch("atexit.register")  # critical
-    @patch("litellm.proxy.db.prisma_client.PrismaManager.setup_database")
+    @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff_helper")
+    @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff")
     @patch("litellm.proxy.db.prisma_client.should_update_prisma_schema", return_value=False)
-    def test_skip_server_startup(self, mock_should_update, mock_setup_db, mock_atexit_register, mock_uvicorn_run):
+    def test_skip_server_startup(self, mock_should_update, mock_check_diff, mock_check_diff_helper, mock_atexit_register, mock_uvicorn_run):
         from click.testing import CliRunner
 
         from litellm.proxy.proxy_cli import run_server
@@ -242,18 +248,14 @@ class TestProxyInitializationHelpers:
             KeyManagementSettings=MagicMock(),
             save_worker_config=MagicMock(),
         )
-        # Remove DATABASE_URL/DIRECT_URL so the CLI doesn't attempt
-        # real prisma operations when these are set in CI.
         clean_env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "DIRECT_URL")}
+        clean_env["DATABASE_URL"] = "postgresql://test:test@localhost:5432/test"
         with patch.dict(
             os.environ, clean_env, clear=True,
         ), patch.dict(
             "sys.modules",
             {
                 "proxy_server": mock_proxy_module,
-                # Prevent real import of proxy_server inside Click's
-                # isolation context (heavy side effects cause stream
-                # lifecycle issues with Click 8.2+)
                 "litellm.proxy.proxy_server": mock_proxy_module,
             },
         ), patch(
@@ -265,14 +267,12 @@ class TestProxyInitializationHelpers:
                 "port": 8000,
             }
 
-            # --- skip startup ---
             result = runner.invoke(run_server, ["--local", "--skip_server_startup"])
 
             assert result.exit_code == 0, f"exit_code={result.exit_code}, output={result.output}"
             assert "Skipping server startup" in result.output
             mock_uvicorn_run.assert_not_called()
 
-            # --- normal startup ---
             mock_uvicorn_run.reset_mock()
 
             result = runner.invoke(run_server, ["--local"])
@@ -288,12 +288,8 @@ class TestProxyInitializationHelpers:
         self, mock_should_update, mock_setup_db, mock_atexit_register, mock_uvicorn_run
     ):
         """Proxy default api_version should match litellm.AZURE_DEFAULT_API_VERSION for consistency."""
-        from click.testing import CliRunner
-
         import litellm
-        from litellm.proxy.proxy_cli import run_server
 
-        runner = CliRunner()
         mock_proxy_module = MagicMock(
             app=MagicMock(),
             ProxyConfig=MagicMock(),
@@ -315,7 +311,7 @@ class TestProxyInitializationHelpers:
                 "host": "localhost",
                 "port": 8000,
             }
-            result = runner.invoke(run_server, ["--local", "--skip_server_startup"])
+            result = _invoke_run_server(["--local", "--skip_server_startup"])
             assert result.exit_code == 0, f"exit_code={result.exit_code}, output={result.output}"
             mock_proxy_module.save_worker_config.assert_called_once()
             call_kwargs = mock_proxy_module.save_worker_config.call_args[1]
@@ -483,8 +479,6 @@ class TestProxyInitializationHelpers:
     @patch("builtins.print")
     def test_run_server_no_config_passed(self, mock_print, mock_uvicorn_run):
         """Test that run_server properly handles the case when no config is passed"""
-        import asyncio
-
         from click.testing import CliRunner
 
         from litellm.proxy.proxy_cli import run_server
@@ -628,27 +622,25 @@ class TestHealthAppFactory:
         assert isinstance(health_app_1, fastapi.FastAPI)
         assert isinstance(health_app_2, fastapi.FastAPI)
 
+    @patch("builtins.print")
     @patch("subprocess.run")
     @patch("atexit.register")
-    @patch("litellm.proxy.db.prisma_client.PrismaManager.setup_database")
+    @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff_helper")
     @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff")
     @patch("litellm.proxy.db.prisma_client.should_update_prisma_schema")
     def test_use_prisma_db_push_flag_behavior(
         self,
         mock_should_update_schema,
         mock_check_schema_diff,
-        mock_setup_database,
+        mock_check_schema_diff_helper,
         mock_atexit_register,
         mock_subprocess_run,
+        mock_print,
     ):
-        """Test that use_prisma_db_push flag correctly controls PrismaManager.setup_database use_migrate parameter"""
-        from litellm.proxy.proxy_cli import run_server
-
-        # Mock subprocess.run to simulate prisma being available
+        """Test that use_prisma_db_push changes the non-mutating remediation hint when diff checking is enabled."""
         mock_subprocess_run.return_value = MagicMock(returncode=0)
-
-        # Mock should_update_prisma_schema to return True (so setup_database gets called)
         mock_should_update_schema.return_value = True
+        mock_check_schema_diff_helper.return_value = (True, ["ALTER TABLE test;"])
 
         mock_proxy_module = MagicMock(
             app=MagicMock(),
@@ -681,49 +673,130 @@ class TestHealthAppFactory:
                 "port": 8000,
             }
 
-            # Use standalone_mode=False to bypass Click's CliRunner stream
-            # isolation which causes flaky "I/O operation on closed file"
-            # errors in CI environments (Click 8.3.x stream lifecycle issue).
+            mock_should_update_schema.return_value = False
+            result = _invoke_run_server(["--local", "--skip_server_startup"])
+            assert result.exit_code == 0, result.output
+            mock_check_schema_diff.assert_called_once_with(db_url=None)
+            mock_check_schema_diff_helper.assert_not_called()
 
-            # Test 1: Without --use_prisma_db_push flag (default behavior)
-            # use_prisma_db_push should be False (default), so use_migrate should be True
-            run_server.main(
-                ["--local", "--skip_server_startup"], standalone_mode=False
-            )
-            mock_setup_database.assert_called_with(use_migrate=True)
-
-            # Reset mocks
-            mock_setup_database.reset_mock()
-            mock_should_update_schema.reset_mock()
+            mock_check_schema_diff.reset_mock()
+            mock_check_schema_diff_helper.reset_mock()
+            mock_print.reset_mock()
             mock_should_update_schema.return_value = True
 
-            # Test 2: With --use_prisma_db_push flag set
-            # use_prisma_db_push should be True, so use_migrate should be False
-            run_server.main(
-                ["--local", "--skip_server_startup", "--use_prisma_db_push"],
-                standalone_mode=False,
+            result = _invoke_run_server(["--local", "--skip_server_startup"])
+            assert result.exit_code == 0, result.output
+            checked_db_url = mock_check_schema_diff_helper.call_args.args[0]
+            assert checked_db_url.startswith(
+                "postgresql://test:test@localhost:5432/test"
             )
-            mock_setup_database.assert_called_with(use_migrate=False)
+            assert "connection_limit=" in checked_db_url
+            mock_check_schema_diff.assert_not_called()
+            assert any(
+                "prisma migrate deploy" in str(call)
+                for call in mock_print.call_args_list
+            )
 
+            mock_check_schema_diff_helper.reset_mock()
+            mock_print.reset_mock()
+
+            result = _invoke_run_server(
+                ["--local", "--skip_server_startup", "--use_prisma_db_push"]
+            )
+            assert result.exit_code == 0, result.output
+            checked_db_url = mock_check_schema_diff_helper.call_args.args[0]
+            assert checked_db_url.startswith(
+                "postgresql://test:test@localhost:5432/test"
+            )
+            assert any(
+                "prisma db push" in str(call)
+                for call in mock_print.call_args_list
+            )
+
+    @patch("builtins.print")
     @patch("subprocess.run")
     @patch("atexit.register")
-    @patch("litellm.proxy.db.prisma_client.PrismaManager.setup_database")
+    @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff_helper")
+    @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff")
+    @patch("litellm.proxy.db.prisma_client.should_update_prisma_schema")
+    def test_direct_url_only_diff_check_uses_resolved_active_db_url(
+        self,
+        mock_should_update_schema,
+        mock_check_schema_diff,
+        mock_check_schema_diff_helper,
+        mock_atexit_register,
+        mock_subprocess_run,
+        mock_print,
+    ):
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+        mock_should_update_schema.return_value = True
+        mock_check_schema_diff_helper.return_value = (False, [])
+
+        mock_proxy_module = MagicMock(
+            app=MagicMock(),
+            ProxyConfig=MagicMock(),
+            KeyManagementSettings=MagicMock(),
+            save_worker_config=MagicMock(),
+        )
+
+        clean_env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("DATABASE_URL", "DIRECT_URL")
+        }
+        clean_env["DIRECT_URL"] = "postgresql://direct:only@localhost:5432/test"
+
+        with patch.dict(
+            os.environ, clean_env, clear=True
+        ), patch.dict(
+            "sys.modules",
+            {
+                "proxy_server": mock_proxy_module,
+                "litellm.proxy.proxy_server": mock_proxy_module,
+            },
+        ), patch(
+            "litellm.proxy.proxy_cli.ProxyInitializationHelpers._get_default_unvicorn_init_args"
+        ) as mock_get_args:
+            mock_get_args.return_value = {
+                "app": "litellm.proxy.proxy_server:app",
+                "host": "localhost",
+                "port": 8000,
+            }
+
+            result = _invoke_run_server(["--local", "--skip_server_startup"])
+
+            assert result.exit_code == 0, result.output
+            checked_db_url = mock_check_schema_diff_helper.call_args.args[0]
+            assert checked_db_url.startswith(
+                "postgresql://direct:only@localhost:5432/test"
+            )
+            assert "connection_limit=" in checked_db_url
+            assert "pool_timeout=" in checked_db_url
+            mock_check_schema_diff.assert_not_called()
+            assert not any(
+                "Prisma schema is out of sync" in str(call)
+                for call in mock_print.call_args_list
+            )
+
+    @patch("builtins.print")
+    @patch("subprocess.run")
+    @patch("atexit.register")
+    @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff_helper")
     @patch("litellm.proxy.db.check_migration.check_prisma_schema_diff")
     @patch("litellm.proxy.db.prisma_client.should_update_prisma_schema")
     def test_startup_fails_when_db_setup_fails(
         self,
         mock_should_update_schema,
         mock_check_schema_diff,
-        mock_setup_database,
+        mock_check_schema_diff_helper,
         mock_atexit_register,
         mock_subprocess_run,
+        mock_print,
     ):
-        """Test that proxy exits with code 1 when PrismaManager.setup_database returns False and --enforce_prisma_migration_check is set"""
-        from litellm.proxy.proxy_cli import run_server
-
+        """Test that proxy exits with code 1 on enforced diff detection without mutating schema."""
         mock_subprocess_run.return_value = MagicMock(returncode=0)
         mock_should_update_schema.return_value = True
-        mock_setup_database.return_value = False
+        mock_check_schema_diff_helper.return_value = (True, ["ALTER TABLE test;"])
 
         mock_proxy_module = MagicMock(
             app=MagicMock(),
@@ -756,12 +829,21 @@ class TestHealthAppFactory:
                 "port": 8000,
             }
 
-            with pytest.raises(SystemExit) as exc_info:
-                run_server.main(
-                    ["--local", "--skip_server_startup", "--enforce_prisma_migration_check"], standalone_mode=False
-                )
-            assert exc_info.value.code == 1
-            mock_setup_database.assert_called_once_with(use_migrate=True)
+            result = _invoke_run_server(
+                [
+                    "--local",
+                    "--skip_server_startup",
+                    "--enforce_prisma_migration_check",
+                ]
+            )
+            assert result.exit_code == 1, result.output
+            checked_db_url = mock_check_schema_diff_helper.call_args.args[0]
+            assert checked_db_url.startswith(
+                "postgresql://test:test@localhost:5432/test"
+            )
+            assert "connection_limit=" in checked_db_url
+            mock_check_schema_diff.assert_not_called()
+            assert any("ALTER TABLE test;" in str(call) for call in mock_print.call_args_list)
 
 
 # --- Module-level helpers for worker startup hook tests ---
