@@ -51,7 +51,8 @@ FROM $LITELLM_RUNTIME_IMAGE AS runtime
 USER root
 
 # Install runtime dependencies (libsndfile needed for audio processing on ARM64)
-RUN apk add --no-cache bash openssl tzdata nodejs npm python3 py3-pip libsndfile && \
+# Prisma's native engines need ABI 3 even when Wolfi's openssl command resolves to ABI 4.
+RUN apk add --no-cache bash openssl libssl3 libcrypto3 tzdata nodejs npm python3 py3-pip libsndfile && \
     npm install -g npm@latest tar@7.5.11 glob@11.1.0 @isaacs/brace-expansion@5.0.1 minimatch@10.2.4 diff@8.0.3 && \
     # SECURITY FIX: npm bundles tar, glob, and brace-expansion at multiple nested
     # levels inside its dependency tree. `npm install -g <pkg>` only creates a
@@ -130,6 +131,8 @@ RUN sed -i 's/\r$//' docker/install_auto_router.sh && chmod +x docker/install_au
 
 # Generate prisma client using the correct schema
 RUN prisma generate --schema=./litellm/proxy/schema.prisma
+# Client generation alone does not prove the native engine can load its runtime libraries.
+RUN LITELLM_PRISMA_RUNTIME_SMOKE=1 python3 tests/litellm/test_prisma_runtime.py
 # Convert Windows line endings to Unix for entrypoint scripts
 RUN sed -i 's/\r$//' docker/entrypoint.sh && chmod +x docker/entrypoint.sh
 RUN sed -i 's/\r$//' docker/prod_entrypoint.sh && chmod +x docker/prod_entrypoint.sh
