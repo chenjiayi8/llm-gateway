@@ -3,6 +3,12 @@ cookbook
 .circleci
 .github
 tests
+# Include only the native Prisma smoke check used by the runtime image build.
+!tests
+tests/*
+!tests/litellm
+tests/litellm/*
+!tests/litellm/test_prisma_runtime.py
 .git
 .devcontainer
 *.tgz
